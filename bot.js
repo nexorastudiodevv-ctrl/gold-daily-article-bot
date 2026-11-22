@@ -16,6 +16,9 @@ const CONFIG = {
   ]
 };
 
+// خط الأمير للنصوص العربية في الصورة (مع خطوط احتياطية)
+const CARD_FONT = 'Amiri, Noto Sans Arabic, DejaVu Sans, sans-serif';
+
 function validateEnvironment() {
   const missing = ['GROQ_API_KEY', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID'].filter(
     (key) => !CONFIG[key] || !CONFIG[key].trim()
@@ -183,45 +186,45 @@ async function createGoldCardPng(gold) {
   }
 
   const svg = [
-    '<svg width="1280" height="720" viewBox="0 0 1280 720" xmlns="http://www.w3.org/2000/svg">',
-    '<defs>',
-    '<linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">',
-    '<stop offset="0%" stop-color="#090D16"/>',
-    '<stop offset="55%" stop-color="#111827"/>',
-    '<stop offset="100%" stop-color="#1E293B"/>',
-    '</linearGradient>',
-    '<linearGradient id="gold" x1="0%" y1="0%" x2="100%" y2="0%">',
-    '<stop offset="0%" stop-color="#FEF08A"/>',
-    '<stop offset="50%" stop-color="#F59E0B"/>',
-    '<stop offset="100%" stop-color="#D97706"/>',
-    '</linearGradient>',
-    '</defs>',
-    '<rect width="1280" height="720" fill="url(#bg)"/>',
-    '<rect x="40" y="40" width="1200" height="640" rx="28" fill="#0F172A" fill-opacity="0.82" stroke="#F59E0B" stroke-opacity="0.4" stroke-width="2"/>',
-    '<rect x="1174" y="84" width="10" height="40" rx="5" fill="url(#gold)"/>',
-    '<text x="1156" y="113" text-anchor="end" direction="rtl" font-family="Noto Sans Arabic, DejaVu Sans, sans-serif" font-size="25" font-weight="bold" fill="#F8FAFC">سهم الذهب | أسعار الذهب</text>',
-    `<text x="84" y="113" text-anchor="start" font-family="Noto Sans Arabic, DejaVu Sans, sans-serif" font-size="22" font-weight="bold" fill="#94A3B8">${gold.dateLabel}</text>`,
-    '<text x="1176" y="192" text-anchor="end" direction="rtl" font-family="Noto Sans Arabic, DejaVu Sans, sans-serif" font-size="22" font-weight="bold" fill="#F59E0B">سعر الأونصة عالمياً (دولار)</text>',
-    `<text x="1176" y="298" text-anchor="end" font-family="Noto Sans Arabic, DejaVu Sans, sans-serif" font-size="92" font-weight="bold" fill="url(#gold)">${ounceText}</text>`,
+    `<svg width="1280" height="720" viewBox="0 0 1280 720" xmlns="http://www.w3.org/2000/svg">`,
+    `<defs>`,
+    `<linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">`,
+    `<stop offset="0%" stop-color="#090D16"/>`,
+    `<stop offset="55%" stop-color="#111827"/>`,
+    `<stop offset="100%" stop-color="#1E293B"/>`,
+    `</linearGradient>`,
+    `<linearGradient id="gold" x1="0%" y1="0%" x2="100%" y2="0%">`,
+    `<stop offset="0%" stop-color="#FEF08A"/>`,
+    `<stop offset="50%" stop-color="#F59E0B"/>`,
+    `<stop offset="100%" stop-color="#D97706"/>`,
+    `</linearGradient>`,
+    `</defs>`,
+    `<rect width="1280" height="720" fill="url(#bg)"/>`,
+    `<rect x="40" y="40" width="1200" height="640" rx="28" fill="#0F172A" fill-opacity="0.82" stroke="#F59E0B" stroke-opacity="0.4" stroke-width="2"/>`,
+    `<rect x="1174" y="84" width="10" height="40" rx="5" fill="url(#gold)"/>`,
+    `<text x="1156" y="113" text-anchor="end" direction="rtl" font-family="${CARD_FONT}" font-size="25" font-weight="bold" fill="#F8FAFC">سهم الذهب | أسعار الذهب</text>`,
+    `<text x="84" y="113" text-anchor="start" font-family="${CARD_FONT}" font-size="22" font-weight="bold" fill="#94A3B8">${gold.dateLabel}</text>`,
+    `<text x="1176" y="192" text-anchor="end" direction="rtl" font-family="${CARD_FONT}" font-size="22" font-weight="bold" fill="#F59E0B">سعر الأونصة عالمياً (دولار)</text>`,
+    `<text x="1176" y="298" text-anchor="end" font-family="${CARD_FONT}" font-size="92" font-weight="bold" fill="url(#gold)">${ounceText}</text>`,
     `<rect x="816" y="336" width="360" height="52" rx="12" fill="${gold.trendColor}" fill-opacity="0.16" stroke="${gold.trendColor}" stroke-width="2"/>`,
-    `<text x="996" y="370" text-anchor="middle" font-family="Noto Sans Arabic, DejaVu Sans, sans-serif" font-size="23" font-weight="bold" fill="${gold.trendColor}">${changeText}</text>`,
-    '<rect x="476" y="336" width="316" height="52" rx="12" fill="#1E293B" stroke="#334155" stroke-width="2"/>',
-    `<text x="634" y="370" text-anchor="middle" direction="rtl" font-family="Noto Sans Arabic, DejaVu Sans, sans-serif" font-size="21" font-weight="bold" fill="#E2E8F0">${trendAr}</text>`,
-    '<rect x="84" y="168" width="306" height="220" rx="22" fill="#1E293B" stroke="#F59E0B" stroke-opacity="0.4" stroke-width="2"/>',
-    '<polygon points="237,203 316,252 237,301 158,252" fill="url(#gold)"/>',
-    '<polygon points="158,252 237,301 237,343 158,294" fill="#B45309"/>',
-    '<polygon points="316,252 237,301 237,343 316,294" fill="#D97706"/>',
-    '<text x="237" y="371" text-anchor="middle" font-family="Noto Sans Arabic, DejaVu Sans, sans-serif" font-size="18" font-weight="bold" fill="#FDE047">@sahm_elzahab</text>',
-    '<rect x="844" y="455" width="352" height="162" rx="20" fill="#1E293B" stroke="#F59E0B" stroke-opacity="0.3" stroke-width="1.5"/>',
-    '<text x="1020" y="502" text-anchor="middle" direction="rtl" font-family="Noto Sans Arabic, DejaVu Sans, sans-serif" font-size="22" fill="#94A3B8">عيار 24 / جرام</text>',
-    `<text x="1020" y="572" text-anchor="middle" font-family="Noto Sans Arabic, DejaVu Sans, sans-serif" font-size="44" font-weight="bold" fill="#FDE047">${g24}</text>`,
-    '<rect x="464" y="455" width="352" height="162" rx="20" fill="#1E293B" stroke="#F59E0B" stroke-opacity="0.3" stroke-width="1.5"/>',
-    '<text x="640" y="502" text-anchor="middle" direction="rtl" font-family="Noto Sans Arabic, DejaVu Sans, sans-serif" font-size="22" fill="#94A3B8">عيار 21 / جرام</text>',
-    `<text x="640" y="572" text-anchor="middle" font-family="Noto Sans Arabic, DejaVu Sans, sans-serif" font-size="44" font-weight="bold" fill="#FDE047">${g21}</text>`,
-    '<rect x="84" y="455" width="352" height="162" rx="20" fill="#1E293B" stroke="#F59E0B" stroke-opacity="0.3" stroke-width="1.5"/>',
-    '<text x="260" y="502" text-anchor="middle" direction="rtl" font-family="Noto Sans Arabic, DejaVu Sans, sans-serif" font-size="22" fill="#94A3B8">عيار 18 / جرام</text>',
-    `<text x="260" y="572" text-anchor="middle" font-family="Noto Sans Arabic, DejaVu Sans, sans-serif" font-size="44" font-weight="bold" fill="#FDE047">${g18}</text>',
-    '</svg>'
+    `<text x="996" y="370" text-anchor="middle" font-family="${CARD_FONT}" font-size="23" font-weight="bold" fill="${gold.trendColor}">${changeText}</text>`,
+    `<rect x="476" y="336" width="316" height="52" rx="12" fill="#1E293B" stroke="#334155" stroke-width="2"/>`,
+    `<text x="634" y="370" text-anchor="middle" direction="rtl" font-family="${CARD_FONT}" font-size="21" font-weight="bold" fill="#E2E8F0">${trendAr}</text>`,
+    `<rect x="84" y="168" width="306" height="220" rx="22" fill="#1E293B" stroke="#F59E0B" stroke-opacity="0.4" stroke-width="2"/>`,
+    `<polygon points="237,203 316,252 237,301 158,252" fill="url(#gold)"/>`,
+    `<polygon points="158,252 237,301 237,343 158,294" fill="#B45309"/>`,
+    `<polygon points="316,252 237,301 237,343 316,294" fill="#D97706"/>`,
+    `<text x="237" y="371" text-anchor="middle" font-family="${CARD_FONT}" font-size="18" font-weight="bold" fill="#FDE047">@sahm_elzahab</text>`,
+    `<rect x="844" y="455" width="352" height="162" rx="20" fill="#1E293B" stroke="#F59E0B" stroke-opacity="0.3" stroke-width="1.5"/>`,
+    `<text x="1020" y="502" text-anchor="middle" direction="rtl" font-family="${CARD_FONT}" font-size="22" fill="#94A3B8">عيار 24 / جرام</text>`,
+    `<text x="1020" y="572" text-anchor="middle" font-family="${CARD_FONT}" font-size="44" font-weight="bold" fill="#FDE047">${g24}</text>`,
+    `<rect x="464" y="455" width="352" height="162" rx="20" fill="#1E293B" stroke="#F59E0B" stroke-opacity="0.3" stroke-width="1.5"/>`,
+    `<text x="640" y="502" text-anchor="middle" direction="rtl" font-family="${CARD_FONT}" font-size="22" fill="#94A3B8">عيار 21 / جرام</text>`,
+    `<text x="640" y="572" text-anchor="middle" font-family="${CARD_FONT}" font-size="44" font-weight="bold" fill="#FDE047">${g21}</text>`,
+    `<rect x="84" y="455" width="352" height="162" rx="20" fill="#1E293B" stroke="#F59E0B" stroke-opacity="0.3" stroke-width="1.5"/>`,
+    `<text x="260" y="502" text-anchor="middle" direction="rtl" font-family="${CARD_FONT}" font-size="22" fill="#94A3B8">عيار 18 / جرام</text>`,
+    `<text x="260" y="572" text-anchor="middle" font-family="${CARD_FONT}" font-size="44" font-weight="bold" fill="#FDE047">${g18}</text>`,
+    `</svg>`
   ].join('\n');
 
   return await sharp(Buffer.from(svg)).png().toBuffer();
