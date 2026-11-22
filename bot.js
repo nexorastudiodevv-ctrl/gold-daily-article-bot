@@ -3,7 +3,6 @@ const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 
 async function fetchGoldData() {
-  // محاولة أولى من goldprice.org مع ترويسات متصفح
   try {
     const res = await fetch('https://data-asg.goldprice.org/dbXRates/USD', {
       headers: {
@@ -30,7 +29,6 @@ async function fetchGoldData() {
     console.warn(`خطأ في الاتصال بالمصدر الأول (${err.message})، جاري تجربة مصدر بديل...`);
   }
 
-  // مصدر بديل مجاني عبر أسعار الصرف مقابل XAU إن توفرت
   try {
     const altRes = await fetch('https://api.gold-api.com/price/XAU', {
       headers: {
@@ -54,13 +52,48 @@ async function fetchGoldData() {
     console.warn(`تعذر جلب السعر من المصدر البديل (${err.message})`);
   }
 
-  // في حال تعذر الوصول لأي واجهة أسعار خارجية أثناء التشغيل، نمرر التاريخ لكتابة تحليل عام دون إيقاف النشر
   return {
     ounceUsd: 'غير متاح لحظياً عبر المصدر الخارجي',
     changeUsd: '0.00',
     changePercent: '0.00',
     date: new Date().toISOString()
   };
+}
+
+async function resolveGroqModel() {
+  const preferredModels = [
+    'llama-3.3-70b-versatile',
+    'llama-3.1-70b-versatile',
+    'llama-3.1-8b-instant',
+    'gemma2-9b-it',
+    'mixtral-8x7b-32768'
+  ];
+
+  try {
+    const res = await fetch('https://api.groq.com/openai/v1/models', {
+      headers: {
+        'Authorization': `Bearer ${GROQ_API_KEY}`,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      const availableIds = new Set((data.data || []).map((m) => m.id));
+      for (const modelId of preferredModels) {
+        if (availableIds.has(modelId)) {
+          return modelId;
+        }
+      }
+      if (data.data?.length > 0) {
+        return data.data[0].id;
+      }
+    }
+  } catch (err) {
+    console.warn('تعذر جلب قائمة النماذج من Groq، سيتم استخدام نموذج افتراضي:', err.message);
+  }
+
+  return 'llama-3.1-8b-instant';
 }
 
 async function generateArticle(gold) {
@@ -78,6 +111,9 @@ ${priceLine}
 4. اختم بتنويه قصير بأن الأسعار استرشادية وتتغير لحظياً.
 5. لا تستخدم علامات النجوم المزدوجة (**) بكثرة، واجعل التنسيق مريحاً للقراءة على الهاتف.`;
 
+  const model = await resolveGroqModel();
+  console.log('النموذج المختار في Groq:', model);
+
   const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -85,7 +121,7 @@ ${priceLine}
       'Content-Type': 'application/json'
     },
     body: JSON.stringify({
-      model: 'llama-3.3-70b-versatile',
+      model,
       messages: [
         { role: 'system', content: 'أنت صحفي اقتصادي متخصص في أسواق الذهب والعملات.' },
         { role: 'user', content: prompt }
