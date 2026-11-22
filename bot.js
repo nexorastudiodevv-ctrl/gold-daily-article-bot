@@ -180,12 +180,13 @@ const LEFT = 120;
 
 function esc(s) {
   return String(s)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+    .replace(/&/g, '&')
+    .replace(/</g, '<')
+    .replace(/>/g, '>')
+    .replace(/"/g, '"');
 }
 
+// تقسيم النص العربي لأسطر حسب عدد الحروف (مع اقتطاع بـ … لو زاد عن الحد)
 function wrapText(text, maxChars, maxLines) {
   const words = String(text).replace(/\s+/g, ' ').trim().split(' ');
   const lines = [];
@@ -406,17 +407,17 @@ function sanitizeTelegramHtml(text) {
     return '';
   });
 
-  cleaned = cleaned.replace(/&(?!(amp|lt|gt|quot);)/g, '&amp;');
+  cleaned = cleaned.replace(/&(?!(amp|lt|gt|quot);)/g, '&');
   return cleaned.replace(/\n{3,}/g, '\n\n').trim();
 }
 
 function stripHtmlTags(htmlText) {
   return htmlText
     .replace(/<[^>]+>/g, '')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"');
+    .replace(/&/g, '&')
+    .replace(/</g, '<')
+    .replace(/>/g, '>')
+    .replace(/"/g, '"');
 }
 
 // ───────────────────────── Groq ─────────────────────────
