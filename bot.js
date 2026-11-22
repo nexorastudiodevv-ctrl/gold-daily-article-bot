@@ -78,7 +78,7 @@ function formatDateLabel(rawDate) {
   }).toUpperCase();
 }
 
-function calculateGoldMetrics(ounceUsd, changeUsd, changePercent, rawDate, sourceName) {
+function calculateGoldMetrics(ounceUsd, changeUsd, changePercent, rawDate, sourceName, sourceUrl = '') {
   const ounce = Number(ounceUsd);
   const chg = Number(changeUsd || 0);
   const pct = Number(changePercent || 0);
@@ -107,6 +107,7 @@ function calculateGoldMetrics(ounceUsd, changeUsd, changePercent, rawDate, sourc
   return {
     available: true,
     source: sourceName,
+    sourceUrl,
     ounceUsd: ounce.toFixed(2),
     gram24Usd: gram24.toFixed(2),
     gram21Usd: gram21.toFixed(2),
@@ -138,7 +139,14 @@ async function fetchGoldData() {
       const data = await res.json();
       const item = data.items?.[0];
       if (item?.xauPrice) {
-        return calculateGoldMetrics(item.xauPrice, item.chgXau, item.pcXau, data.date, 'GoldPrice Global Feed');
+        return calculateGoldMetrics(
+          item.xauPrice,
+          item.chgXau,
+          item.pcXau,
+          data.date,
+          'GoldPrice Global Feed',
+          'https://goldprice.org/'
+        );
       }
     }
   } catch (err) {
@@ -159,7 +167,8 @@ async function fetchGoldData() {
           altData.ch ?? altData.change ?? 0,
           altData.chp ?? altData.change_percent ?? 0,
           altData.updatedAt || altData.timestamp,
-          'Gold-API Spot'
+          'Gold-API Spot',
+          'https://api.gold-api.com/price/XAU'
         );
       }
     }
@@ -169,6 +178,8 @@ async function fetchGoldData() {
 
   return {
     available: false,
+    source: null,
+    sourceUrl: null,
     pctNumber: 0,
     trendEn: 'MARKET ANALYSIS',
     trendColor: '#F59E0B',
@@ -425,6 +436,37 @@ function stripHtmlTags(htmlText) {
     .replace(/"/g, '"');
 }
 
+// ───────────────────────── التوثيق والمصادر ─────────────────────────
+
+function buildSourcesSection(gold) {
+  const updatedAt = new Date(gold?.date || Date.now()).toLocaleString('ar-EG', {
+    dateStyle: 'medium',
+    timeStyle: 'short'
+  });
+
+  if (gold?.available && gold.source) {
+    const sourceLine = gold.sourceUrl
+      ? `• مصدر التسعير الفوري: ${esc(gold.source)} (${esc(gold.sourceUrl)})`
+      : `• مصدر التسعير الفوري: ${esc(gold.source)}`;
+
+    return [
+      '',
+      '<b>المصادر والتوثيق</b>',
+      sourceLine,
+      `• الجلسة التداولية: ${esc(gold.session || '')}`,
+      `• توقيت بيانات السعر: ${esc(updatedAt)}`
+    ].join('\n');
+  }
+
+  return [
+    '',
+    '<b>المصادر والتوثيق</b>',
+    '• حالة التسعير: تعذر سحب بيانات فورية لحظة النشر (تحليل استرشادي)',
+    `• الجلسة التداولية: ${esc(gold.session || '')}`,
+    `• توقيت التقرير: ${esc(updatedAt)}`
+  ].join('\n');
+}
+
 // ───────────────────────── Groq ─────────────────────────
 
 function cleanModelOutput(text) {
@@ -468,7 +510,8 @@ function buildMarketBrief(gold) {
         `سعر الأونصة عالمياً: ${gold.ounceUsd} دولار`,
         `التغير اليومي: ${gold.changeUsd} دولار (${gold.changePercent})`,
         `عيار 24: ${gold.gram24Usd} دولار | عيار 21: ${gold.gram21Usd} دولار | عيار 18: ${gold.gram18Usd} دولار`,
-        `الجلسة التداولية: ${gold.session}`
+        `الجلسة التداولية: ${gold.session}`,
+        `المصدر السعري: ${gold.source}`
       ].join('\n')
     : `تعذر سحب التسعير اللحظي وقت النشر. الجلسة التداولية: ${gold.session}`;
 }
@@ -645,7 +688,10 @@ async function reportArticleToSite(gold, insights, articleHtml) {
       date: gold?.date || new Date().toISOString(),
       ounceUsd: gold?.available ? Number(gold.ounceUsd) : null,
       headline: insights?.headline || 'تقرير أسعار الذهب اليومي',
-      articleHtml
+      articleHtml,
+      sources: gold?.available
+        ? [{ name: gold.source, url: gold.sourceUrl || null, timestamp: gold.date }]
+        : []
     };
 
     const res = await fetch(url, {
@@ -674,7 +720,8 @@ async function main() {
   validateEnvironment();
   const gold = await fetchGoldData();
 
-  const article = await generateEditorialArticle(gold);
+  const editorialArticle = await generateEditorialArticle(gold);
+  const article = `${editorialArticle}\n${buildSourcesSection(gold)}`;
   const insights = await generateInsights(gold, article);
   const images = await createArticleImages(gold, insights);
 
@@ -697,6 +744,7 @@ module.exports = {
   buildPricesSvg,
   buildPointsSvg,
   buildOutlookSvg,
+  buildSourcesSection,
   calculateGoldMetrics,
   defaultInsights,
   parseInsights,
