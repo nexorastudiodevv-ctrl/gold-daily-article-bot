@@ -6,9 +6,9 @@ const CONFIG = {
   TROY_OUNCE_TO_GRAMS: 31.1034768,
   PREFERRED_MODELS: [
     'llama-3.3-70b-versatile',
-    'llama-3.1-70b-versatile',
-    'qwen-2.5-32b',
     'llama-3.1-8b-instant',
+    'qwen/qwen3-32b',
+    'meta-llama/llama-4-scout-17b-16e-instruct',
     'gemma2-9b-it'
   ]
 };
@@ -167,15 +167,27 @@ async function resolveGroqModel() {
 
     if (res?.ok) {
       const data = await res.json();
-      const availableIds = new Set((data.data || []).map((m) => m.id));
+      const allModels = (data.data || []).map((m) => m.id);
+      const availableSet = new Set(allModels);
+
       for (const modelId of CONFIG.PREFERRED_MODELS) {
-        if (availableIds.has(modelId)) return modelId;
+        if (availableSet.has(modelId)) {
+          return modelId;
+        }
       }
-      if (data.data?.length > 0) return data.data[0].id;
+
+      const excludedKeywords = ['whisper', 'tts', 'guard', 'safeguard', 'embed'];
+      const textModel = allModels.find(
+        (id) => !excludedKeywords.some((kw) => id.toLowerCase().includes(kw))
+      );
+      if (textModel) {
+        return textModel;
+      }
     }
   } catch (err) {
     console.warn('تعذر فحص قائمة نماذج Groq، سيتم استخدام النموذج الافتراضي:', err.message);
   }
+
   return 'llama-3.3-70b-versatile';
 }
 
