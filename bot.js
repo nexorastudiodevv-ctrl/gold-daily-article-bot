@@ -103,6 +103,7 @@ function calculateGoldMetrics(ounceUsd, changeUsd, changePercent, rawDate, sourc
     gram18Usd: gram18.toFixed(2),
     changeUsd: `${chg >= 0 ? '+' : ''}${chg.toFixed(2)}`,
     changePercent: `${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%`,
+    pctNumber: pct,
     trend,
     trendEn,
     trendColor,
@@ -158,6 +159,7 @@ async function fetchGoldData() {
 
   return {
     available: false,
+    pctNumber: 0,
     trendEn: 'MARKET ANALYSIS',
     trendColor: '#F59E0B',
     dateLabel: formatDateLabel(new Date().toISOString()),
@@ -167,11 +169,18 @@ async function fetchGoldData() {
 }
 
 async function createGoldCardPng(gold) {
-  const ounceText = gold.available ? `$${gold.ounceUsd}` : 'SPOT GOLD';
-  const changeText = gold.available ? `${gold.changeUsd}$ (${gold.changePercent})` : 'DAILY REPORT';
+  const ounceText = gold.available ? `$${gold.ounceUsd}` : 'سعر الذهب';
+  const changeText = gold.available ? `${gold.changeUsd}$ (${gold.changePercent})` : 'تقرير يومي';
   const g24 = gold.available ? `$${gold.gram24Usd}` : '--';
   const g21 = gold.available ? `$${gold.gram21Usd}` : '--';
   const g18 = gold.available ? `$${gold.gram18Usd}` : '--';
+
+  let trendAr = 'استقرار نسبي';
+  if (gold.available && gold.pctNumber > 0.15) {
+    trendAr = 'صعود السوق';
+  } else if (gold.available && gold.pctNumber < -0.15) {
+    trendAr = 'هبوط السوق';
+  }
 
   const svg = `
   <svg width="1280" height="720" viewBox="0 0 1280 720" xmlns="http://www.w3.org/2000/svg">
@@ -191,41 +200,36 @@ async function createGoldCardPng(gold) {
     <rect width="1280" height="720" fill="url(#bg)"/>
     <rect x="40" y="40" width="1200" height="640" rx="28" fill="#0F172A" fill-opacity="0.82" stroke="#F59E0B" stroke-opacity="0.4" stroke-width="2"/>
 
-    <!-- رأس البطاقة -->
-    <rect x="84" y="84" width="10" height="42" rx="5" fill="url(#gold)"/>
-    <text x="110" y="114" font-family="DejaVu Sans, Liberation Sans, Arial, sans-serif" font-size="28" font-weight="bold" fill="#F8FAFC">SAHM ELZAHAB  |  GOLD MARKET</text>
-    <text x="1196" y="114" text-anchor="end" font-family="DejaVu Sans, Liberation Sans, Arial, sans-serif" font-size="23" font-weight="bold" fill="#94A3B8">${gold.dateLabel}</text>
+    <rect x="1186" y="84" width="10" height="42" rx="5" fill="url(#gold)"/>
+    <text x="1162" y="114" text-anchor="end" direction="rtl" unicode-bidi="bidi-override" font-family="Noto Sans Arabic, DejaVu Sans, sans-serif" font-size="28" font-weight="bold" fill="#F8FAFC">سهم الذهب  |  تقرير أسعار الذهب</text>
+    <text x="94" y="114" text-anchor="start" font-family="Noto Sans Arabic, DejaVu Sans, sans-serif" font-size="23" font-weight="bold" fill="#94A3B8">${gold.dateLabel}</text>
 
-    <!-- السعر الرئيسي -->
-    <text x="84" y="196" font-family="DejaVu Sans, Liberation Sans, Arial, sans-serif" font-size="22" font-weight="bold" fill="#F59E0B" letter-spacing="2">XAU / USD OUNCE PRICE</text>
-    <text x="84" y="302" font-family="DejaVu Sans, Liberation Sans, Arial, sans-serif" font-size="98" font-weight="bold" fill="url(#gold)">${ounceText}</text>
+    <text x="1186" y="196" text-anchor="end" direction="rtl" unicode-bidi="bidi-override" font-family="Noto Sans Arabic, DejaVu Sans, sans-serif" font-size="24" font-weight="bold" fill="#F59E0B">سعر أونصة الذهب عالمياً (دولار)</text>
+    <text x="1186" y="302" text-anchor="end" font-family="Noto Sans Arabic, DejaVu Sans, sans-serif" font-size="96" font-weight="bold" fill="url(#gold)">${ounceText}</text>
 
-    <!-- شارة التغير والاتجاه -->
-    <rect x="84" y="338" width="380" height="52" rx="12" fill="${gold.trendColor}" fill-opacity="0.16" stroke="${gold.trendColor}" stroke-width="2"/>
-    <text x="274" y="372" text-anchor="middle" font-family="DejaVu Sans, Liberation Sans, Arial, sans-serif" font-size="24" font-weight="bold" fill="${gold.trendColor}">${changeText}</text>
+    <rect x="806" y="338" width="380" height="52" rx="12" fill="${gold.trendColor}" fill-opacity="0.16" stroke="${gold.trendColor}" stroke-width="2"/>
+    <text x="996" y="372" text-anchor="middle" font-family="Noto Sans Arabic, DejaVu Sans, sans-serif" font-size="24" font-weight="bold" fill="${gold.trendColor}">${changeText}</text>
 
-    <rect x="488" y="338" width="320" height="52" rx="12" fill="#1E293B" stroke="#334155" stroke-width="2"/>
-    <text x="648" y="372" text-anchor="middle" font-family="DejaVu Sans, Liberation Sans, Arial, sans-serif" font-size="21" font-weight="bold" fill="#E2E8F0">${gold.trendEn}</text>
+    <rect x="472" y="338" width="314" height="52" rx="12" fill="#1E293B" stroke="#334155" stroke-width="2"/>
+    <text x="629" y="372" text-anchor="middle" direction="rtl" unicode-bidi="bidi-override" font-family="Noto Sans Arabic, DejaVu Sans, sans-serif" font-size="22" font-weight="bold" fill="#E2E8F0">${trendAr}</text>
 
-    <!-- بطاقة شعار جانبية -->
-    <rect x="890" y="168" width="306" height="222" rx="22" fill="#1E293B" stroke="#F59E0B" stroke-opacity="0.4" stroke-width="2"/>
-    <polygon points="1043,205 1122,254 1043,303 964,254" fill="url(#gold)"/>
-    <polygon points="964,254 1043,303 1043,345 964,296" fill="#B45309"/>
-    <polygon points="1122,254 1043,303 1043,345 1122,296" fill="#D97706"/>
-    <text x="1043" y="374" text-anchor="middle" font-family="DejaVu Sans, Liberation Sans, Arial, sans-serif" font-size="18" font-weight="bold" fill="#FDE047">@sahm_elzahab</text>
-
-    <!-- صناديق الأعيرة الثلاثة -->
-    <rect x="84" y="455" width="352" height="162" rx="20" fill="#1E293B" stroke="#F59E0B" stroke-opacity="0.3" stroke-width="1.5"/>
-    <text x="260" y="502" text-anchor="middle" font-family="DejaVu Sans, Liberation Sans, Arial, sans-serif" font-size="21" fill="#94A3B8">24K / GRAM</text>
-    <text x="260" y="572" text-anchor="middle" font-family="DejaVu Sans, Liberation Sans, Arial, sans-serif" font-size="44" font-weight="bold" fill="#FDE047">${g24}</text>
-
-    <rect x="464" y="455" width="352" height="162" rx="20" fill="#1E293B" stroke="#F59E0B" stroke-opacity="0.3" stroke-width="1.5"/>
-    <text x="640" y="502" text-anchor="middle" font-family="DejaVu Sans, Liberation Sans, Arial, sans-serif" font-size="21" fill="#94A3B8">21K / GRAM</text>
-    <text x="640" y="572" text-anchor="middle" font-family="DejaVu Sans, Liberation Sans, Arial, sans-serif" font-size="44" font-weight="bold" fill="#FDE047">${g21}</text>
+    <rect x="94" y="168" width="306" height="222" rx="22" fill="#1E293B" stroke="#F59E0B" stroke-opacity="0.4" stroke-width="2"/>
+    <polygon points="247,205 326,254 247,303 168,254" fill="url(#gold)"/>
+    <polygon points="168,254 247,303 247,345 168,296" fill="#B45309"/>
+    <polygon points="326,254 247,303 247,345 326,296" fill="#D97706"/>
+    <text x="247" y="374" text-anchor="middle" font-family="Noto Sans Arabic, DejaVu Sans, sans-serif" font-size="18" font-weight="bold" fill="#FDE047">@sahm_elzahab</text>
 
     <rect x="844" y="455" width="352" height="162" rx="20" fill="#1E293B" stroke="#F59E0B" stroke-opacity="0.3" stroke-width="1.5"/>
-    <text x="1020" y="502" text-anchor="middle" font-family="DejaVu Sans, Liberation Sans, Arial, sans-serif" font-size="21" fill="#94A3B8">18K / GRAM</text>
-    <text x="1020" y="572" text-anchor="middle" font-family="DejaVu Sans, Liberation Sans, Arial, sans-serif" font-size="44" font-weight="bold" fill="#FDE047">${g18}</text>
+    <text x="1020" y="502" text-anchor="middle" direction="rtl" unicode-bidi="bidi-override" font-family="Noto Sans Arabic, DejaVu Sans, sans-serif" font-size="22" fill="#94A3B8">عيار 24 / جرام</text>
+    <text x="1020" y="572" text-anchor="middle" font-family="Noto Sans Arabic, DejaVu Sans, sans-serif" font-size="44" font-weight="bold" fill="#FDE047">${g24}</text>
+
+    <rect x="464" y="455" width="352" height="162" rx="20" fill="#1E293B" stroke="#F59E0B" stroke-opacity="0.3" stroke-width="1.5"/>
+    <text x="640" y="502" text-anchor="middle" direction="rtl" unicode-bidi="bidi-override" font-family="Noto Sans Arabic, DejaVu Sans, sans-serif" font-size="22" fill="#94A3B8">عيار 21 / جرام</text>
+    <text x="640" y="572" text-anchor="middle" font-family="Noto Sans Arabic, DejaVu Sans, sans-serif" font-size="44" font-weight="bold" fill="#FDE047">${g21}</text>
+
+    <rect x="84" y="455" width="352" height="162" rx="20" fill="#1E293B" stroke="#F59E0B" stroke-opacity="0.3" stroke-width="1.5"/>
+    <text x="260" y="502" text-anchor="middle" direction="rtl" unicode-bidi="bidi-override" font-family="Noto Sans Arabic, DejaVu Sans, sans-serif" font-size="22" fill="#94A3B8">عيار 18 / جرام</text>
+    <text x="260" y="572" text-anchor="middle" font-family="Noto Sans Arabic, DejaVu Sans, sans-serif" font-size="44" font-weight="bold" fill="#FDE047">${g18}</text>
   </svg>`;
 
   return await sharp(Buffer.from(svg)).png().toBuffer();
