@@ -2,28 +2,74 @@ const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 
-// 1. جلب بيانات أسعار الذهب العالمية
 async function fetchGoldData() {
-  const res = await fetch('https://data-asg.goldprice.org/dbXRates/USD');
-  if (!res.ok) throw new Error(`فشل جلب الأسعار: ${res.status}`);
-  const data = await res.json();
-  const item = data.items?.[0];
-  if (!item || !item.xauPrice) throw new Error('بيانات السعر غير متوفرة حالياً');
+  // محاولة أولى من goldprice.org مع ترويسات متصفح
+  try {
+    const res = await fetch('https://data-asg.goldprice.org/dbXRates/USD', {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Referer': 'https://goldprice.org/',
+        'Accept': 'application/json, text/plain, */*'
+      }
+    });
 
+    if (res.ok) {
+      const data = await res.json();
+      const item = data.items?.[0];
+      if (item && item.xauPrice) {
+        return {
+          ounceUsd: Number(item.xauPrice).toFixed(2),
+          changeUsd: Number(item.chgXau || 0).toFixed(2),
+          changePercent: Number(item.pcXau || 0).toFixed(2),
+          date: data.date || new Date().toISOString()
+        };
+      }
+    }
+    console.warn(`تعذر جلب السعر من المصدر الأول (الحالة: ${res.status})، جاري تجربة مصدر بديل...`);
+  } catch (err) {
+    console.warn(`خطأ في الاتصال بالمصدر الأول (${err.message})، جاري تجربة مصدر بديل...`);
+  }
+
+  // مصدر بديل مجاني عبر أسعار الصرف مقابل XAU إن توفرت
+  try {
+    const altRes = await fetch('https://api.gold-api.com/price/XAU', {
+      headers: {
+        'User-Agent': 'Mozilla/5.0',
+        'Accept': 'application/json'
+      }
+    });
+    if (altRes.ok) {
+      const altData = await altRes.json();
+      const price = altData.price ?? altData.xauPrice;
+      if (price) {
+        return {
+          ounceUsd: Number(price).toFixed(2),
+          changeUsd: Number(altData.ch ?? altData.change ?? 0).toFixed(2),
+          changePercent: Number(altData.chp ?? altData.change_percent ?? 0).toFixed(2),
+          date: altData.updatedAt || altData.timestamp || new Date().toISOString()
+        };
+      }
+    }
+  } catch (err) {
+    console.warn(`تعذر جلب السعر من المصدر البديل (${err.message})`);
+  }
+
+  // في حال تعذر الوصول لأي واجهة أسعار خارجية أثناء التشغيل، نمرر التاريخ لكتابة تحليل عام دون إيقاف النشر
   return {
-    ounceUsd: item.xauPrice.toFixed(2),
-    changeUsd: item.chgXau.toFixed(2),
-    changePercent: item.pcXau.toFixed(2),
-    date: data.date
+    ounceUsd: 'غير متاح لحظياً عبر المصدر الخارجي',
+    changeUsd: '0.00',
+    changePercent: '0.00',
+    date: new Date().toISOString()
   };
 }
 
-// 2. توليد المقال باستخدام Groq API
 async function generateArticle(gold) {
-  const prompt = `أنت محرر اقتصادي محترف. اكتب مقالاً يومياً قصيراً وجذاباً باللغة العربية الفصحى السلسة للنشر على قناة تليجرام حول حركة أسعار الذهب اليوم بناءً على البيانات التالية فقط:
-- سعر أونصة الذهب عالمياً: ${gold.ounceUsd} دولار
-- مقدار التغير: ${gold.changeUsd} دولار (${gold.changePercent}%)
-- توقيت البيانات: ${gold.date}
+  const priceLine = gold.ounceUsd.includes('غير متاح')
+    ? `- ملاحظة السعر: لم يتوفر رقم لحظي مباشر من المصدر الخارجي وقت النشر (${gold.date})، فركّز على حركة السوق العامة والعوامل المؤثرة في أسعار الذهب دون اختلاق أرقام سعرية محددة.`
+    : `- سعر أونصة الذهب عالمياً: ${gold.ounceUsd} دولار\n- مقدار التغير: ${gold.changeUsd} دولار (${gold.changePercent}%)\n- توقيت البيانات: ${gold.date}`;
+
+  const prompt = `أنت محرر اقتصادي محترف. اكتب مقالاً يومياً قصيراً وجذاباً باللغة العربية الفصحى السلسة للنشر على قناة تليجرام حول حركة أسعار الذهب اليوم بناءً على المعلومات التالية فقط:
+${priceLine}
 
 شروط المقال:
 1. ابدأ بعنوان جذاب مع إيموجي مناسب.
@@ -59,7 +105,6 @@ async function generateArticle(gold) {
   return article.trim();
 }
 
-// 3. إرسال المقال إلى تليجرام
 async function sendToTelegram(text) {
   const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
   const res = await fetch(url, {
@@ -80,7 +125,7 @@ async function sendToTelegram(text) {
 async function main() {
   console.log('جاري جلب أسعار الذهب...');
   const gold = await fetchGoldData();
-  console.log('تم جلب البيانات:', gold);
+  console.log('بيانات السوق المستخدمة:', gold);
 
   console.log('جاري كتابة المقال عبر Groq...');
   const article = await generateArticle(gold);
