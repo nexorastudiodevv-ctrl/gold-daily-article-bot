@@ -7,9 +7,10 @@ const CONFIG = {
   PREFERRED_MODELS: [
     'llama-3.3-70b-versatile',
     'llama-3.1-8b-instant',
+    'openai/gpt-oss-120b',
+    'openai/gpt-oss-20b',
     'qwen/qwen3-32b',
-    'meta-llama/llama-4-scout-17b-16e-instruct',
-    'gemma2-9b-it'
+    'meta-llama/llama-4-scout-17b-16e-instruct'
   ]
 };
 
@@ -156,7 +157,16 @@ async function fetchGoldData() {
   };
 }
 
-async function resolveGroqModel() {
+function isNonChatModel(modelId) {
+  const lower = modelId.toLowerCase();
+  return ['whisper', 'orpheus', 'tts', 'guard', 'safeguard', 'embed'].some((kw) =>
+    lower.includes(kw)
+  );
+}
+
+async function resolveGroqModelCandidates() {
+  const candidates = [];
+
   try {
     const res = await fetchWithRetry('https://api.groq.com/openai/v1/models', {
       headers: {
@@ -167,28 +177,32 @@ async function resolveGroqModel() {
 
     if (res?.ok) {
       const data = await res.json();
-      const allModels = (data.data || []).map((m) => m.id);
+      const allModels = (data.data || []).map((m) => m.id).filter((id) => !isNonChatModel(id));
       const availableSet = new Set(allModels);
 
       for (const modelId of CONFIG.PREFERRED_MODELS) {
-        if (availableSet.has(modelId)) {
-          return modelId;
+        if (availableSet.has(modelId) && !candidates.includes(modelId)) {
+          candidates.push(modelId);
         }
       }
 
-      const excludedKeywords = ['whisper', 'tts', 'guard', 'safeguard', 'embed'];
-      const textModel = allModels.find(
-        (id) => !excludedKeywords.some((kw) => id.toLowerCase().includes(kw))
-      );
-      if (textModel) {
-        return textModel;
+      for (const id of allModels) {
+        if (!candidates.includes(id)) {
+          candidates.push(id);
+        }
       }
     }
   } catch (err) {
-    console.warn('تعذر فحص قائمة نماذج Groq، سيتم استخدام النموذج الافتراضي:', err.message);
+    console.warn('تعذر فحص قائمة نماذج Groq:', err.message);
   }
 
-  return 'llama-3.3-70b-versatile';
+  for (const fallback of ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant']) {
+    if (!candidates.includes(fallback)) {
+      candidates.push(fallback);
+    }
+  }
+
+  return candidates;
 }
 
 function sanitizeTelegramHtml(text) {
@@ -239,36 +253,53 @@ async function generateEditorialArticle(gold) {
 
   const userPrompt = `اكتب المقال الاقتصادي الكامل الآن (حوالي 1000 كلمة) بناءً على هذه المعطيات فقط:\n\n${marketBrief}`;
 
-  const model = await resolveGroqModel();
-  console.log(`النموذج التحريري المختار: ${model}`);
+  const candidates = await resolveGroqModelCandidates();
+  let lastError = null;
 
-  const res = await fetchWithRetry('https://api.groq.com/openai/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${CONFIG.GROQ_API_KEY}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      model,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt }
-      ],
-      temperature: 0.5,
-      max_tokens: 3200
-    })
-  });
+  for (const model of candidates) {
+    console.log(`محاولة التوليد عبر النموذج: ${model}`);
+    try {
+      const res = await fetchWithRetry('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${CONFIG.GROQ_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt }
+          ],
+          temperature: 0.5,
+          max_tokens: 3200
+        })
+      });
 
-  if (!res?.ok) {
-    const errText = res ? await res.text() : 'انقطع الاتصال بخادم Groq';
-    throw new Error(`فشل توليد المقال من Groq: ${errText}`);
+      if (!res?.ok) {
+        const errText = res ? await res.text() : 'انقطع الاتصال بخادم Groq';
+        lastError = new Error(`فشل توليد المقال من Groq (${model}): ${errText}`);
+        console.warn(lastError.message);
+        continue;
+      }
+
+      const data = await res.json();
+      const rawArticle = data.choices?.[0]?.message?.content;
+      if (!rawArticle) {
+        lastError = new Error(`استجابة Groq فارغة من النموذج (${model})`);
+        console.warn(lastError.message);
+        continue;
+      }
+
+      console.log(`تم التوليد بنجاح عبر النموذج: ${model}`);
+      return sanitizeTelegramHtml(rawArticle);
+    } catch (err) {
+      lastError = err;
+      console.warn(`خطأ أثناء المحاولة مع النموذج (${model}): ${err.message}`);
+    }
   }
 
-  const data = await res.json();
-  const rawArticle = data.choices?.[0]?.message?.content;
-  if (!rawArticle) throw new Error('استجابة Groq فارغة من المحتوى التحريري');
-
-  return sanitizeTelegramHtml(rawArticle);
+  throw lastError || new Error('فشل توليد المقال من جميع النماذج المتاحة في Groq');
 }
 
 async function sendToTelegram(htmlText) {
@@ -301,34 +332,4 @@ async function sendToTelegram(htmlText) {
       body: JSON.stringify({
         chat_id: CONFIG.TELEGRAM_CHAT_ID,
         text: chunk,
-        parse_mode: 'HTML',
-        disable_web_page_preview: true
-      })
-    });
-
-    if (!res?.ok) {
-      const errText = res ? await res.text() : 'انقطع الاتصال بخادم تليجرام';
-      throw new Error(`فشل الإرسال لتليجرام: ${errText}`);
-    }
-  }
-}
-
-async function main() {
-  validateEnvironment();
-
-  console.log('1/3 جاري سحب وحساب مؤشرات الذهب العالمية...');
-  const gold = await fetchGoldData();
-  console.log('ملخص المؤشرات:', gold);
-
-  console.log('2/3 جاري صياغة المقال الاقتصادي عبر Groq...');
-  const article = await generateEditorialArticle(gold);
-
-  console.log('3/3 جاري النشر في قناة تليجرام...');
-  await sendToTelegram(article);
-  console.log('تم نشر المقال الصحفي بنجاح!');
-}
-
-main().catch((err) => {
-  console.error('❌ توقف التنفيذ بسبب خطأ:', err.message);
-  process.exit(1);
-});
+        parse
