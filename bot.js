@@ -206,11 +206,46 @@ async function resolveGroqModelCandidates() {
 }
 
 function sanitizeTelegramHtml(text) {
-  return text
-    .trim()
-    .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
-    .replace(/^#{1,3}\s+(.+)$/gm, '<b>$1</b>')
-    .replace(/&(?!(amp|lt|gt|quot);)/g, '&amp;');
+  let cleaned = text.trim();
+
+  // تحويل Markdown شائع إن وُجد
+  cleaned = cleaned
+    .replace(/\*\*(.+?)\*\*/gs, '<b>$1</b>')
+    .replace(/^#{1,4}\s+(.+)$/gm, '<b>$1</b>');
+
+  // تحويل وسوم القوائم والفقرات والأسطر إلى نص متوافق مع تليجرام
+  cleaned = cleaned
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p\s*>/gi, '\n\n')
+    .replace(/<p[^>]*>/gi, '')
+    .replace(/<\/?(ul|ol)[^>]*>/gi, '\n')
+    .replace(/<li[^>]*>/gi, '• ')
+    .replace(/<\/li\s*>/gi, '\n');
+
+  // إزالة أي وسوم HTML غير مدعومة في تليجرام مع الإبقاء على محتواها
+  const allowedTags = new Set(['b', 'strong', 'i', 'em', 'u', 'ins', 's', 'strike', 'del', 'code', 'pre', 'blockquote']);
+  cleaned = cleaned.replace(/<\/?([a-zA-Z0-9]+)([^>]*)>/g, (match, tagName) => {
+    const lowerTag = tagName.toLowerCase();
+    if (allowedTags.has(lowerTag)) {
+      return match.startsWith('</') ? `</${lowerTag}>` : `<${lowerTag}>`;
+    }
+    return '';
+  });
+
+  // حماية علامات & غير المرتبطة بكيانات HTML
+  cleaned = cleaned.replace(/&(?!(amp|lt|gt|quot);)/g, '&amp;');
+
+  // تقليص الأسطر الفارغة الزائدة
+  return cleaned.replace(/\n{3,}/g, '\n\n').trim();
+}
+
+function stripHtmlTags(htmlText) {
+  return htmlText
+    .replace(/<[^>]+>/g, '')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"');
 }
 
 async function generateEditorialArticle(gold) {
@@ -233,7 +268,7 @@ async function generateEditorialArticle(gold) {
 6. اربط الأسباب بالنتائج بوضوح (لماذا يحدث هذا التحرك؟ وما أثره الفعلي على قرارات الادخار والشراء والبيع؟).
 7. اختم بخلاصة واضحة وتوصية عملية متزنة أو سؤال يفتح التفكير للقراء، مع تنويه قصير في النهاية بأن الأسعار استرشادية وتتغير لحظياً.
 8. تجنب الحشو والتكرار والمقدمات الإنشائية المبتذلة، واجعل كل فقرة تضيف فكرة جديدة وملموسة.
-9. التنسيق: استخدم وسوم HTML البسيطة فقط للتأكيد: <b>للنص العريض</b> و <i>للنص المائل</i>. يُمنع استخدام علامات Markdown مثل ** أو ## أو الجداول، ولا تطرح أي أسئلة تمهيدية بل اكتب المقال النهائي مباشرة.`;
+9. التنسيق: استخدم وسوم HTML البسيطة فقط للتأكيد: <b>للنص العريض</b> و <i>للنص المائل</i>. يُمنع استخدام علامات Markdown مثل ** أو ## أو الجداول، ويُمنع استخدام وسوم <ul> أو <li> أو <p> أو الجداول، ولا تطرح أي أسئلة تمهيدية بل اكتب المقال النهائي مباشرة.`;
 
   const marketBrief = gold.available
     ? `البيانات اللحظية المعتمدة للمقال:
@@ -337,10 +372,26 @@ async function sendToTelegram(htmlText) {
       })
     });
 
-    if (!res?.ok) {
-      const errText = res ? await res.text() : 'انقطع الاتصال بخادم تليجرام';
-      throw new Error(`فشل الإرسال لتليجرام: ${errText}`);
+    if (res?.ok) continue;
+
+    const errText = res ? await res.text() : 'انقطع الاتصال بخادم تليجرام';
+    if (res?.status === 400 && errText.includes("can't parse entities")) {
+      console.warn('تعذر تحليل وسوم HTML في جزء الرسالة، جاري الإرسال كنص عادي كخطة بديلة...');
+      const plainRes = await fetchWithRetry(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: CONFIG.TELEGRAM_CHAT_ID,
+          text: stripHtmlTags(chunk),
+          disable_web_page_preview: true
+        })
+      });
+      if (plainRes?.ok) continue;
+      const plainErr = plainRes ? await plainRes.text() : errText;
+      throw new Error(`فشل الإرسال لتليجرام: ${plainErr}`);
     }
+
+    throw new Error(`فشل الإرسال لتليجرام: ${errText}`);
   }
 }
 
