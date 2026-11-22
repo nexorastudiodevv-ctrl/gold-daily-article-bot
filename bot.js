@@ -24,17 +24,13 @@ async function fetchGoldData() {
         };
       }
     }
-    console.warn(`تعذر جلب السعر من المصدر الأول (الحالة: ${res.status})، جاري تجربة مصدر بديل...`);
   } catch (err) {
-    console.warn(`خطأ في الاتصال بالمصدر الأول (${err.message})، جاري تجربة مصدر بديل...`);
+    console.warn('تعذر جلب السعر من المصدر الأول:', err.message);
   }
 
   try {
     const altRes = await fetch('https://api.gold-api.com/price/XAU', {
-      headers: {
-        'User-Agent': 'Mozilla/5.0',
-        'Accept': 'application/json'
-      }
+      headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' }
     });
     if (altRes.ok) {
       const altData = await altRes.json();
@@ -49,7 +45,7 @@ async function fetchGoldData() {
       }
     }
   } catch (err) {
-    console.warn(`تعذر جلب السعر من المصدر البديل (${err.message})`);
+    console.warn('تعذر جلب السعر من المصدر البديل:', err.message);
   }
 
   return {
@@ -65,8 +61,7 @@ async function resolveGroqModel() {
     'llama-3.3-70b-versatile',
     'llama-3.1-70b-versatile',
     'llama-3.1-8b-instant',
-    'gemma2-9b-it',
-    'mixtral-8x7b-32768'
+    'gemma2-9b-it'
   ];
 
   try {
@@ -81,38 +76,37 @@ async function resolveGroqModel() {
       const data = await res.json();
       const availableIds = new Set((data.data || []).map((m) => m.id));
       for (const modelId of preferredModels) {
-        if (availableIds.has(modelId)) {
-          return modelId;
-        }
+        if (availableIds.has(modelId)) return modelId;
       }
-      if (data.data?.length > 0) {
-        return data.data[0].id;
-      }
+      if (data.data?.length > 0) return data.data[0].id;
     }
   } catch (err) {
-    console.warn('تعذر جلب قائمة النماذج من Groq، سيتم استخدام نموذج افتراضي:', err.message);
+    console.warn('استخدام النموذج الافتراضي:', err.message);
   }
 
   return 'llama-3.1-8b-instant';
 }
 
-async function generateArticle(gold) {
+async function generateArticleAndImagePrompt(gold) {
   const priceLine = gold.ounceUsd.includes('غير متاح')
     ? `- ملاحظة السعر: لم يتوفر رقم لحظي مباشر من المصدر الخارجي وقت النشر (${gold.date})، فركّز على حركة السوق العامة والعوامل المؤثرة في أسعار الذهب دون اختلاق أرقام سعرية محددة.`
     : `- سعر أونصة الذهب عالمياً: ${gold.ounceUsd} دولار\n- مقدار التغير: ${gold.changeUsd} دولار (${gold.changePercent}%)\n- توقيت البيانات: ${gold.date}`;
 
-  const prompt = `أنت محرر اقتصادي محترف. اكتب مقالاً يومياً قصيراً وجذاباً باللغة العربية الفصحى السلسة للنشر على قناة تليجرام حول حركة أسعار الذهب اليوم بناءً على المعلومات التالية فقط:
+  const prompt = `أنت محرر اقتصادي محترف. المطلوب منك شيئان بناءً على بيانات الذهب التالية:
 ${priceLine}
 
-شروط المقال:
-1. ابدأ بعنوان جذاب مع إيموجي مناسب.
-2. لخّص حركة السوق اليوم (صعود، هبوط، أو استقرار) بلغة واضحة ومباشرة بدون حشو.
-3. أضف فقرة توضح أبرز العوامل المؤثرة في السوق وتأثير ذلك على الأسعار المحلية.
-4. اختم بتنويه قصير بأن الأسعار استرشادية وتتغير لحظياً.
-5. لا تستخدم علامات النجوم المزدوجة (**) بكثرة، واجعل التنسيق مريحاً للقراءة على الهاتف.`;
+أولاً: اكتب مقالاً يومياً قصيراً وجذاباً باللغة العربية الفصحى السلسة للنشر على قناة تليجرام (بطول حوالي 700 إلى 900 حرف حتى يناسب النشر مع صورة):
+- ابدأ بعنوان جذاب مع إيموجي مناسب.
+- لخّص حركة السوق اليوم بوضوح بدون حشو.
+- أضف فقرة قصيرة عن العوامل المؤثرة وتأثيرها محلياً.
+- اختم بتنويه قصير بأن الأسعار استرشادية وتتغير لحظياً.
+- لا تستخدم علامات النجوم المزدوجة (**).
+
+ثانياً: في آخر سطر فقط، اكتب وصفاً إنجليزياً قصيراً (15 كلمة كحد أقصى) لتوليد صورة احترافية تعبر عن حالة السوق اليوم (سبائك ذهب، عملات ذهبية، رسم بياني مالي) مسبوقاً بالعلامة IMAGE_PROMPT:
+مثال:
+IMAGE_PROMPT: Luxury shiny gold bars and gold coins with subtle glowing financial chart in dark elegant background, photorealistic, 4k`;
 
   const model = await resolveGroqModel();
-  console.log('النموذج المختار في Groq:', model);
 
   const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
@@ -136,19 +130,62 @@ ${priceLine}
   }
 
   const data = await res.json();
-  const article = data.choices?.[0]?.message?.content;
-  if (!article) throw new Error('لم يتم توليد نص المقال');
-  return article.trim();
+  const fullContent = data.choices?.[0]?.message?.content?.trim();
+  if (!fullContent) throw new Error('لم يتم توليد نص المقال');
+
+  const lines = fullContent.split('\n');
+  let imagePrompt = 'Luxury shiny gold bullion bars and coins with financial market chart background, photorealistic, editorial style';
+  const articleLines = [];
+
+  for (const line of lines) {
+    if (line.trim().startsWith('IMAGE_PROMPT:')) {
+      const extracted = line.replace('IMAGE_PROMPT:', '').trim();
+      if (extracted) imagePrompt = extracted;
+    } else {
+      articleLines.push(line);
+    }
+  }
+
+  return {
+    article: articleLines.join('\n').trim(),
+    imagePrompt
+  };
 }
 
-async function sendToTelegram(text) {
+async function generateImageBuffer(imagePrompt) {
+  const seed = Math.floor(Math.random() * 1000000);
+  const encodedPrompt = encodeURIComponent(`${imagePrompt}, no text, no watermark, high quality`);
+  const imageUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=1280&height=720&seed=${seed}&nologo=true`;
+
+  try {
+    console.log('جاري توليد صورة للمقال...');
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 35000);
+
+    const res = await fetch(imageUrl, { signal: controller.signal });
+    clearTimeout(timeout);
+
+    if (!res.ok) {
+      console.warn(`تعذر توليد الصورة (الحالة: ${res.status})، سيتم النشر بالنص فقط.`);
+      return null;
+    }
+
+    const arrayBuffer = await res.arrayBuffer();
+    return Buffer.from(arrayBuffer);
+  } catch (err) {
+    console.warn('تجاوز وقت توليد الصورة أو حدث خطأ، سيتم النشر بالنص فقط:', err.message);
+    return null;
+  }
+}
+
+async function sendTextOnly(text) {
   const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       chat_id: TELEGRAM_CHAT_ID,
-      text: text
+      text
     })
   });
 
@@ -158,17 +195,53 @@ async function sendToTelegram(text) {
   }
 }
 
+async function sendPostToTelegram(article, imageBuffer) {
+  if (!imageBuffer) {
+    await sendTextOnly(article);
+    return;
+  }
+
+  // الحد الأقصى لوصف الصورة في تليجرام هو 1024 حرفاً
+  const caption = article.length <= 1024 ? article : article.slice(0, 1020) + '...';
+
+  const formData = new FormData();
+  formData.append('chat_id', TELEGRAM_CHAT_ID);
+  formData.append('caption', caption);
+  formData.append('photo', new Blob([imageBuffer], { type: 'image/jpeg' }), 'gold-daily.jpg');
+
+  const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto`;
+  const res = await fetch(url, {
+    method: 'POST',
+    body: formData
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    console.warn('فشل إرسال الصورة، جاري إرسال النص فقط:', errText);
+    await sendTextOnly(article);
+    return;
+  }
+
+  // إذا كان المقال أطول من 1024 حرفاً نرسل الباقي في رسالة تالية
+  if (article.length > 1024) {
+    await sendTextOnly(article.slice(1020));
+  }
+}
+
 async function main() {
   console.log('جاري جلب أسعار الذهب...');
   const gold = await fetchGoldData();
   console.log('بيانات السوق المستخدمة:', gold);
 
-  console.log('جاري كتابة المقال عبر Groq...');
-  const article = await generateArticle(gold);
+  console.log('جاري كتابة المقال ووصف الصورة عبر Groq...');
+  const { article, imagePrompt } = await generateArticleAndImagePrompt(gold);
+  console.log('وصف الصورة:', imagePrompt);
 
-  console.log('جاري الإرسال إلى تليجرام...');
-  await sendToTelegram(article);
-  console.log('تم إرسال المقال بنجاح!');
+  const imageBuffer = await generateImageBuffer(imagePrompt);
+
+  console.log('جاري النشر على قناة تليجرام...');
+  await sendPostToTelegram(article, imageBuffer);
+  console.log('تم النشر بنجاح!');
 }
 
 main().catch((err) => {
