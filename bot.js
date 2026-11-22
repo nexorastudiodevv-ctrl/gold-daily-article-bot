@@ -4,6 +4,8 @@ const CONFIG = {
   GROQ_API_KEY: process.env.GROQ_API_KEY,
   TELEGRAM_BOT_TOKEN: process.env.TELEGRAM_BOT_TOKEN,
   TELEGRAM_CHAT_ID: process.env.TELEGRAM_CHAT_ID,
+  SITE_API_URL: process.env.SITE_API_URL,
+  SITE_API_SECRET: process.env.SITE_API_SECRET,
   REQUEST_TIMEOUT_MS: 15000,
   TROY_OUNCE_TO_GRAMS: 31.1034768,
   PREFERRED_MODELS: [
@@ -171,7 +173,6 @@ async function fetchGoldData() {
   };
 }
 
-
 // ───────────────────────── أدوات الرسم ─────────────────────────
 
 const RIGHT = 1160;
@@ -185,7 +186,6 @@ function esc(s) {
     .replace(/"/g, '&quot;');
 }
 
-// تقسيم النص العربي لأسطر حسب عدد الحروف (مع اقتطاع بـ … لو زاد عن الحد)
 function wrapText(text, maxChars, maxLines) {
   const words = String(text).replace(/\s+/g, ' ').trim().split(' ');
   const lines = [];
@@ -211,7 +211,6 @@ function wrapText(text, maxChars, maxLines) {
 function arText(x, y, size, fill, content, opts = {}) {
   const anchor = opts.anchor || 'end';
   const weight = opts.weight || 'bold';
-  // ملاحظة: لا نستخدم direction="rtl" لأنه يعكس معنى text-anchor في SVG ويُخرج النص عن الإطار
   return `<text x="${x}" y="${y}" text-anchor="${anchor}" font-family="${CARD_FONT}" font-size="${size}" font-weight="${weight}" fill="${fill}">${esc(content)}</text>`;
 }
 
@@ -247,7 +246,6 @@ function svgShell(gold, inner) {
 
 // ───────────────────────── البطاقات ─────────────────────────
 
-// 1) غلاف المقال
 function buildCoverSvg(gold, insights) {
   const lines = wrapText(insights.headline, 34, 3);
   let inner = arText(RIGHT, 205, 24, '#F59E0B', 'تحليل اقتصادي');
@@ -271,7 +269,6 @@ function buildCoverSvg(gold, insights) {
   return svgShell(gold, inner);
 }
 
-// 2) بطاقة الأسعار
 function buildPricesSvg(gold) {
   const ounceText = gold.available ? `$${gold.ounceUsd}` : 'سعر الذهب';
   const changeText = gold.available ? `${gold.changeUsd}$ (${gold.changePercent})` : 'تقرير يومي';
@@ -305,7 +302,6 @@ function buildPricesSvg(gold) {
   return svgShell(gold, inner);
 }
 
-// 3) أبرز النقاط
 function buildPointsSvg(gold, insights) {
   let inner = arText(RIGHT, 205, 44, '#F59E0B', 'أبرز نقاط المقال');
   const points = insights.points.slice(0, 4);
@@ -326,7 +322,6 @@ function buildPointsSvg(gold, insights) {
   return svgShell(gold, inner);
 }
 
-// 4) الخلاصة والتوقعات
 function buildOutlookSvg(gold, insights) {
   let inner = arText(RIGHT, 215, 44, '#F59E0B', 'الخلاصة والتوقعات');
   inner += `<rect x="${LEFT}" y="250" width="${RIGHT - LEFT}" height="300" rx="24" fill="#1E293B" stroke="#F59E0B" stroke-opacity="0.35" stroke-width="2"/>`;
@@ -424,7 +419,6 @@ function stripHtmlTags(htmlText) {
     .replace(/&quot;/g, '"');
 }
 
-
 // ───────────────────────── Groq ─────────────────────────
 
 function cleanModelOutput(text) {
@@ -491,7 +485,6 @@ async function generateEditorialArticle(gold) {
   return sanitizeTelegramHtml(raw);
 }
 
-// استخراج عنوان + نقاط + خلاصة من المقال نفسه ليكون محتوى الصور مطابقاً له
 function defaultInsights(gold) {
   return {
     headline: gold.available
@@ -569,7 +562,7 @@ async function sendAlbumToTelegram(pngBuffers, gold) {
   });
 
   const res = await fetchWithRetry(
-    `https://api.telegram.org/bot${CONFIG.TELEGRAM_BOT_TOKEN}/sendMediaGroup`,
+    `[https://api.telegram.org/bot$](https://api.telegram.org/bot$){CONFIG.TELEGRAM_BOT_TOKEN}/sendMediaGroup`,
     { method: 'POST', body: formData },
     2,
     45000
@@ -582,7 +575,7 @@ async function sendAlbumToTelegram(pngBuffers, gold) {
 }
 
 async function sendToTelegram(htmlText) {
-  const url = `https://api.telegram.org/bot${CONFIG.TELEGRAM_BOT_TOKEN}/sendMessage`;
+  const url = `[https://api.telegram.org/bot$](https://api.telegram.org/bot$){CONFIG.TELEGRAM_BOT_TOKEN}/sendMessage`;
   const MAX_LENGTH = 4000;
   const chunks = [];
 
@@ -634,13 +627,47 @@ async function sendToTelegram(htmlText) {
   }
 }
 
+// ───────────────────────── إبلاغ موقع سهم الذهب ─────────────────────────
+
+async function reportArticleToSite(gold, insights, articleHtml) {
+  const url = (CONFIG.SITE_API_URL || '').trim();
+  const secret = (CONFIG.SITE_API_SECRET || '').trim();
+  if (!url || !secret) return;
+
+  try {
+    const payload = {
+      date: gold?.date || new Date().toISOString(),
+      ounceUsd: gold?.available ? Number(gold.ounceUsd) : null,
+      headline: insights?.headline || 'تقرير أسعار الذهب اليومي',
+      articleHtml
+    };
+
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${secret}`
+      },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(CONFIG.REQUEST_TIMEOUT_MS)
+    });
+
+    if (!res.ok) {
+      console.warn(`⚠️ تحذير: فشل إرسال التقرير إلى الموقع (HTTP ${res.status}) دون التأثير على نشر تليجرام.`);
+    } else {
+      console.log('✅ تم إرسال التقرير إلى موقع سهم الذهب بنجاح.');
+    }
+  } catch (err) {
+    console.warn(`⚠️ تحذير: تعذر الوصول لموقع سهم الذهب (${err.message}) دون التأثير على نشر تليجرام.`);
+  }
+}
+
 // ───────────────────────── التشغيل ─────────────────────────
 
 async function main() {
   validateEnvironment();
   const gold = await fetchGoldData();
 
-  // نولد المقال أولاً، ثم نبني الصور من محتواه
   const article = await generateEditorialArticle(gold);
   const insights = await generateInsights(gold, article);
   const images = await createArticleImages(gold, insights);
@@ -648,6 +675,8 @@ async function main() {
   await sendAlbumToTelegram(images, gold);
   await sendToTelegram(article);
   console.log('تم نشر الصور والمقال بنجاح!');
+
+  await reportArticleToSite(gold, insights, article);
 }
 
 if (require.main === module) {
