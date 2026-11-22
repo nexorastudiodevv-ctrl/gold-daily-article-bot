@@ -2,10 +2,7 @@ name: Daily Gold Article Bot
 
 on:
   schedule:
-    # المقال الأول: 08:00 صباحاً بتوقيت القاهرة الشتوي (06:00 UTC)
-    - cron: '0 6 * * *'
-    # المقال الثاني: 04:00 عصراً بتوقيت القاهرة الشتوي (14:00 UTC)
-    - cron: '0 14 * * *'
+    - cron: '0 10 * * *'
   workflow_dispatch:
 
 jobs:
@@ -19,6 +16,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+
+      - name: Install Image Generator
+        run: npm install sharp
 
       - name: Run Gold Article Bot
         env:
