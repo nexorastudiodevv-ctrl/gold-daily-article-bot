@@ -1,9 +1,10 @@
+const sharp = require('sharp');
+
 const CONFIG = {
   GROQ_API_KEY: process.env.GROQ_API_KEY,
   TELEGRAM_BOT_TOKEN: process.env.TELEGRAM_BOT_TOKEN,
   TELEGRAM_CHAT_ID: process.env.TELEGRAM_CHAT_ID,
   REQUEST_TIMEOUT_MS: 15000,
-  IMAGE_TIMEOUT_MS: 35000,
   TROY_OUNCE_TO_GRAMS: 31.1034768,
   PREFERRED_MODELS: [
     'llama-3.3-70b-versatile',
@@ -51,16 +52,20 @@ function getMarketSessionContext(now = new Date()) {
   if (day === 6 || (day === 5 && hour >= 22) || (day === 0 && hour < 22)) {
     return 'عطلة نهاية الأسبوع للبورصات العالمية (استقرار سعري عند مستويات الإغلاق الأسبوعي)';
   }
-  if (hour >= 0 && hour < 7) {
-    return 'الجلسة الآسيوية (تداولات طوكيو وشنغهاي)';
-  }
-  if (hour >= 7 && hour < 13) {
-    return 'الجلسة الأوروبية (بورصة لندن للمعادن الثمينة)';
-  }
-  if (hour >= 13 && hour < 21) {
-    return 'الجلسة الأمريكية (تداولات نيويورك كومكس وصدور البيانات الاقتصادية)';
-  }
+  if (hour >= 0 && hour < 7) return 'الجلسة الآسيوية (تداولات طوكيو وشنغهاي)';
+  if (hour >= 7 && hour < 13) return 'الجلسة الأوروبية (بورصة لندن للمعادن الثمينة)';
+  if (hour >= 13 && hour < 21) return 'الجلسة الأمريكية (تداولات نيويورك كومكس وصدور البيانات الاقتصادية)';
   return 'فترة التداول الهادئة بين الإغلاق الأمريكي والافتتاح الآسيوي';
+}
+
+function formatArabicDate(rawDate) {
+  const d = new Date(rawDate || Date.now());
+  if (Number.isNaN(d.getTime())) return 'تحديث اليوم';
+  return d.toLocaleDateString('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric'
+  });
 }
 
 function calculateGoldMetrics(ounceUsd, changeUsd, changePercent, rawDate, sourceName) {
@@ -73,12 +78,19 @@ function calculateGoldMetrics(ounceUsd, changeUsd, changePercent, rawDate, sourc
   const gram18 = gram24 * (18 / 24);
 
   let trend = 'استقرار نسبي';
+  let trendEn = 'STABLE MARKET';
+  let trendColor = '#EAB308';
   let trendEmoji = '⚖️';
+
   if (pct > 0.15) {
     trend = 'صعود';
+    trendEn = 'BULLISH UPTREND';
+    trendColor = '#22C55E';
     trendEmoji = '📈';
   } else if (pct < -0.15) {
     trend = 'هبوط';
+    trendEn = 'BEARISH DOWNTREND';
+    trendColor = '#EF4444';
     trendEmoji = '📉';
   }
 
@@ -92,8 +104,11 @@ function calculateGoldMetrics(ounceUsd, changeUsd, changePercent, rawDate, sourc
     changeUsd: `${chg >= 0 ? '+' : ''}${chg.toFixed(2)}`,
     changePercent: `${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%`,
     trend,
+    trendEn,
+    trendColor,
     trendEmoji,
     session: getMarketSessionContext(),
+    readableDate: formatArabicDate(rawDate),
     date: rawDate || new Date().toISOString()
   };
 }
@@ -112,26 +127,16 @@ async function fetchGoldData() {
       const data = await res.json();
       const item = data.items?.[0];
       if (item?.xauPrice) {
-        return calculateGoldMetrics(
-          item.xauPrice,
-          item.chgXau,
-          item.pcXau,
-          data.date,
-          'GoldPrice Global Feed'
-        );
+        return calculateGoldMetrics(item.xauPrice, item.chgXau, item.pcXau, data.date, 'GoldPrice Global Feed');
       }
     }
-    console.warn(`المصدر الأول غير متاح (الحالة: ${res?.status ?? 'خطأ شبكة'})، جاري التحويل للمصدر الثاني...`);
   } catch (err) {
-    console.warn(`تعذر الاتصال بالمصدر الأول (${err.message})، جاري التحويل للمصدر الثاني...`);
+    console.warn(`تعذر الاتصال بالمصدر الأول (${err.message})`);
   }
 
   try {
     const altRes = await fetchWithRetry('https://api.gold-api.com/price/XAU', {
-      headers: {
-        'User-Agent': 'Mozilla/5.0',
-        'Accept': 'application/json'
-      }
+      headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' }
     });
 
     if (altRes?.ok) {
@@ -153,9 +158,81 @@ async function fetchGoldData() {
 
   return {
     available: false,
+    trendEn: 'MARKET REPORT',
+    trendColor: '#EAB308',
     session: getMarketSessionContext(),
+    readableDate: formatArabicDate(new Date().toISOString()),
     date: new Date().toISOString()
   };
+}
+
+async function createGoldCardPng(gold) {
+  const ounceText = gold.available ? `$${gold.ounceUsd}` : 'LIVE MARKET';
+  const changeText = gold.available ? `${gold.changeUsd}$  (${gold.changePercent})` : 'DAILY ANALYSIS';
+  const g24 = gold.available ? `$${gold.gram24Usd}` : '--';
+  const g21 = gold.available ? `$${gold.gram21Usd}` : '--';
+  const g18 = gold.available ? `$${gold.gram18Usd}` : '--';
+
+  // استخدام الأرقام والرموز الإنجليزية في SVG لضمان عدم تقطع الحروف على خوادم Linux
+  const svg = `
+  <svg width="1280" height="720" viewBox="0 0 1280 720" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="#0B0F19"/>
+        <stop offset="55%" stop-color="#131B2E"/>
+        <stop offset="100%" stop-color="#1E293B"/>
+      </linearGradient>
+      <linearGradient id="goldGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+        <stop offset="0%" stop-color="#FDE047"/>
+        <stop offset="50%" stop-color="#F59E0B"/>
+        <stop offset="100%" stop-color="#D97706"/>
+      </linearGradient>
+    </defs>
+
+    <rect width="1280" height="720" fill="url(#bgGrad)"/>
+    <circle cx="1120" cy="140" r="240" fill="#F59E0B" fill-opacity="0.06"/>
+    <circle cx="160" cy="620" r="200" fill="#F59E0B" fill-opacity="0.05"/>
+
+    <rect x="48" y="48" width="1184" height="624" rx="28" fill="#0F172A" fill-opacity="0.7" stroke="#F59E0B" stroke-opacity="0.35" stroke-width="2"/>
+
+    <!-- الشريط العلوي -->
+    <rect x="90" y="92" width="12" height="44" rx="6" fill="url(#goldGrad)"/>
+    <text x="118" y="123" font-family="DejaVu Sans, Arial, sans-serif" font-size="30" font-weight="bold" fill="#F8FAFC">SAHM ELZAHAB  |  GOLD MARKET REPORT</text>
+    <text x="1190" y="122" text-anchor="end" font-family="DejaVu Sans, Arial, sans-serif" font-size="24" fill="#94A3B8">${gold.readableDate}</text>
+
+    <!-- السعر الرئيسي للأونصة -->
+    <text x="90" y="215" font-family="DejaVu Sans, Arial, sans-serif" font-size="24" font-weight="bold" fill="#F59E0B" letter-spacing="2">XAU / USD SPOT OUNCE</text>
+    <text x="90" y="325" font-family="DejaVu Sans, Arial, sans-serif" font-size="108" font-weight="bold" fill="url(#goldGrad)">${ounceText}</text>
+
+    <!-- شارة التغير -->
+    <rect x="90" y="362" width="380" height="54" rx="14" fill="${gold.trendColor}" fill-opacity="0.16" stroke="${gold.trendColor}" stroke-width="2"/>
+    <text x="280" y="397" text-anchor="middle" font-family="DejaVu Sans, Arial, sans-serif" font-size="25" font-weight="bold" fill="${gold.trendColor}">${changeText}</text>
+
+    <rect x="495" y="362" width="320" height="54" rx="14" fill="#1E293B" stroke="#334155" stroke-width="2"/>
+    <text x="655" y="397" text-anchor="middle" font-family="DejaVu Sans, Arial, sans-serif" font-size="22" font-weight="bold" fill="#E2E8F0">${gold.trendEn}</text>
+
+    <!-- بطاقات الأعيرة -->
+    <rect x="90" y="465" width="345" height="155" rx="20" fill="#1E293B" fill-opacity="0.85" stroke="#F59E0B" stroke-opacity="0.3" stroke-width="1.5"/>
+    <text x="262" y="512" text-anchor="middle" font-family="DejaVu Sans, Arial, sans-serif" font-size="22" fill="#94A3B8">24K GOLD / GRAM</text>
+    <text x="262" y="578" text-anchor="middle" font-family="DejaVu Sans, Arial, sans-serif" font-size="46" font-weight="bold" fill="#FDE047">${g24}</text>
+
+    <rect x="467" y="465" width="345" height="155" rx="20" fill="#1E293B" fill-opacity="0.85" stroke="#F59E0B" stroke-opacity="0.3" stroke-width="1.5"/>
+    <text x="639" y="512" text-anchor="middle" font-family="DejaVu Sans, Arial, sans-serif" font-size="22" fill="#94A3B8">21K GOLD / GRAM</text>
+    <text x="639" y="578" text-anchor="middle" font-family="DejaVu Sans, Arial, sans-serif" font-size="46" font-weight="bold" fill="#FDE047">${g21}</text>
+
+    <rect x="845" y="465" width="345" height="155" rx="20" fill="#1E293B" fill-opacity="0.85" stroke="#F59E0B" stroke-opacity="0.3" stroke-width="1.5"/>
+    <text x="1017" y="512" text-anchor="middle" font-family="DejaVu Sans, Arial, sans-serif" font-size="22" fill="#94A3B8">18K GOLD / GRAM</text>
+    <text x="1017" y="578" text-anchor="middle" font-family="DejaVu Sans, Arial, sans-serif" font-size="46" font-weight="bold" fill="#FDE047">${g18}</text>
+
+    <!-- شارة سبائك -->
+    <rect x="920" y="190" width="270" height="225" rx="24" fill="#1E293B" stroke="#F59E0B" stroke-opacity="0.45" stroke-width="2"/>
+    <polygon points="1055,230 1135,280 1055,330 975,280" fill="url(#goldGrad)"/>
+    <polygon points="975,280 1055,330 1055,375 975,325" fill="#B45309"/>
+    <polygon points="1135,280 1055,330 1055,375 1135,325" fill="#D97706"/>
+    <text x="1055" y="402" text-anchor="middle" font-family="DejaVu Sans, Arial, sans-serif" font-size="18" font-weight="bold" fill="#FDE047">@sahm_elzahab</text>
+  </svg>`;
+
+  return await sharp(Buffer.from(svg)).png().toBuffer();
 }
 
 function isNonChatModel(modelId) {
@@ -182,15 +259,10 @@ async function resolveGroqModelCandidates() {
       const availableSet = new Set(allModels);
 
       for (const modelId of CONFIG.PREFERRED_MODELS) {
-        if (availableSet.has(modelId) && !candidates.includes(modelId)) {
-          candidates.push(modelId);
-        }
+        if (availableSet.has(modelId) && !candidates.includes(modelId)) candidates.push(modelId);
       }
-
       for (const id of allModels) {
-        if (!candidates.includes(id)) {
-          candidates.push(id);
-        }
+        if (!candidates.includes(id)) candidates.push(id);
       }
     }
   } catch (err) {
@@ -198,11 +270,8 @@ async function resolveGroqModelCandidates() {
   }
 
   for (const fallback of ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant']) {
-    if (!candidates.includes(fallback)) {
-      candidates.push(fallback);
-    }
+    if (!candidates.includes(fallback)) candidates.push(fallback);
   }
-
   return candidates;
 }
 
@@ -211,7 +280,8 @@ function sanitizeTelegramHtml(text) {
 
   cleaned = cleaned
     .replace(/\*\*(.+?)\*\*/gs, '<b>$1</b>')
-    .replace(/^#{1,4}\s+(.+)$/gm, '<b>$1</b>');
+    .replace(/^#{1,4}\s+(.+)$/gm, '<b>$1</b>')
+    .replace(/^\s*[-*]\s+/gm, '• ');
 
   cleaned = cleaned
     .replace(/<br\s*\/?>/gi, '\n')
@@ -231,7 +301,6 @@ function sanitizeTelegramHtml(text) {
   });
 
   cleaned = cleaned.replace(/&(?!(amp|lt|gt|quot);)/g, '&amp;');
-
   return cleaned.replace(/\n{3,}/g, '\n\n').trim();
 }
 
@@ -244,7 +313,41 @@ function stripHtmlTags(htmlText) {
     .replace(/&quot;/g, '"');
 }
 
-async function callGroqChat(messages, maxTokens = 3200, temperature = 0.5) {
+async function generateEditorialArticle(gold) {
+  const systemPrompt = `أنت خبير اقتصادي بخبرة تزيد عن 20 عامًا في الاقتصاد الكلي والجزئي والأسواق المالية، وكاتب مقالات محترف تكتب لصحف ومجلات اقتصادية كبرى.
+
+مهمتك: كتابة مقال اقتصادي تحليلي معمق وشامل حول حركة أسعار الذهب وتأثيرها على السوق المحلي والعربي، للنشر في قناة "سهم الذهب" على تليجرام.
+
+المعايير التحريرية:
+- الجمهور المستهدف: القارئ العادي المهتم بالادخار والذهب، وصغار المستثمرين.
+- السوق محل التركيز: السوق العالمي وانعكاسه المباشر على مصر والمنطقة العربية.
+- النبرة واللغة: تحليلية مبسطة، باللغة العربية الفصحى المعاصرة السلسة.
+- الطول المطلوب: مقال موسع ومتماسك يقارب 1000 كلمة (في حدود 900 إلى 1100 كلمة) مقسم إلى فقرات قصيرة وعناوين فرعية واضحة ومريحة للقراءة على الهاتف.
+
+قواعد الكتابة الصارمة:
+1. ابدأ بعنوان خبري جذاب ومقدمة قوية ومشوقة تشد القارئ من أول سطرين.
+2. قسّم المقال إلى عناوين فرعية واضحة تغطي: المشهد السعري والبيانات، العوامل الاقتصادية الكلية، انعكاس السوق العالمي على الأسواق المحلية، توازن وجهات النظر في السوق، وخلاصة وتوصية عملية.
+3. بسّط المصطلحات الاقتصادية المعقدة (مثل التضخم، أسعار الفائدة، عوائد السندات، والسيولة) بأمثلة واضحة من الواقع اليومي وحياة الناس.
+4. الالتزام التام بالأرقام المرفقة فقط؛ لا تخترع أي إحصائيات أو أسعار صرف أو أرقام غير موجودة في البيانات، واذكر بوضوح أن التسعير المحلي يتأثر بعوامل العرض والطلب المحلي وسعر الصرف والمصنعية.
+5. اعرض أكثر من وجهة نظر قبل الوصول لرأيك أو تحليلك (رؤية من يراهنون على التحوط والشراء مقابل رؤية من يفضلون التريث أو جني الأرباح المرحلي).
+6. اربط الأسباب بالنتائج بوضوح، واختم بخلاصة وتوصية عملية متزنة مع تنويه قصير في النهاية بأن الأسعار استرشادية وتتغير لحظياً.
+7. التنسيق: استخدم وسوم HTML البسيطة فقط للتأكيد: <b>للنص العريض</b> و <i>للنص المائل</i>، واستخدم علامة • للنقاط بدلاً من الشرطة. يُمنع استخدام علامات Markdown مثل ** أو ## أو الجداول.`;
+
+  const marketBrief = gold.available
+    ? `البيانات اللحظية المعتمدة للمقال:
+• اتجاه السوق: ${gold.trend} (${gold.trendEmoji})
+• سعر الأونصة عالمياً: ${gold.ounceUsd} دولار
+• مقدار التغير اليومي: ${gold.changeUsd} دولار (${gold.changePercent})
+• السعر العالمي المرجعي للجرام: عيار 24 (${gold.gram24Usd} دولار) | عيار 21 (${gold.gram21Usd} دولار) | عيار 18 (${gold.gram18Usd} دولار)
+• توقيت الجلسة التداولية: ${gold.session}
+• تاريخ التحديث: ${gold.readableDate}`
+    : `البيانات اللحظية المعتمدة للمقال:
+• حالة المصدر: تعذر سحب التسعير اللحظي وقت النشر (${gold.readableDate}).
+• توقيت الجلسة التداولية: ${gold.session}
+• توجيه خاص: ركّز في المقال على تحليل المحركات الاقتصادية لأسعار الذهب وسلوك المدخرين دون ذكر أي أرقام سعرية محددة.`;
+
+  const userPrompt = `اكتب المقال الاقتصادي الكامل الآن (حوالي 1000 كلمة) بناءً على هذه المعطيات فقط:\n\n${marketBrief}`;
+
   const candidates = await resolveGroqModelCandidates();
   let lastError = null;
 
@@ -259,169 +362,64 @@ async function callGroqChat(messages, maxTokens = 3200, temperature = 0.5) {
         },
         body: JSON.stringify({
           model,
-          messages,
-          temperature,
-          max_tokens: maxTokens
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt }
+          ],
+          temperature: 0.5,
+          max_tokens: 3200
         })
       });
 
       if (!res?.ok) {
         const errText = res ? await res.text() : 'انقطع الاتصال بخادم Groq';
-        lastError = new Error(`فشل التوليد من Groq (${model}): ${errText}`);
+        lastError = new Error(`فشل توليد المقال من Groq (${model}): ${errText}`);
         console.warn(lastError.message);
         continue;
       }
 
       const data = await res.json();
-      const content = data.choices?.[0]?.message?.content?.trim();
-      if (!content) {
+      const rawArticle = data.choices?.[0]?.message?.content;
+      if (!rawArticle) {
         lastError = new Error(`استجابة Groq فارغة من النموذج (${model})`);
-        console.warn(lastError.message);
         continue;
       }
 
       console.log(`تم التوليد بنجاح عبر النموذج: ${model}`);
-      return content;
+      return sanitizeTelegramHtml(rawArticle);
     } catch (err) {
       lastError = err;
       console.warn(`خطأ أثناء المحاولة مع النموذج (${model}): ${err.message}`);
     }
   }
 
-  throw lastError || new Error('فشل التوليد من جميع النماذج المتاحة في Groq');
+  throw lastError || new Error('فشل توليد المقال من جميع النماذج المتاحة في Groq');
 }
 
-async function generateEditorialArticle(gold) {
-  const systemPrompt = `أنت خبير اقتصادي بخبرة تزيد عن 20 عامًا في الاقتصاد الكلي والجزئي والأسواق المالية، وفي نفس الوقت كاتب مقالات محترف تكتب لصحف ومجلات اقتصادية كبرى.
-
-مهمتك: كتابة مقال اقتصادي تحليلي معمق وشامل حول حركة أسعار الذهب وتأثيرها على السوق المحلي والعربي، للنشر في قناة تليجرام.
-
-المعايير التحريرية:
-- الجمهور المستهدف: القارئ العادي المهتم بالادخار والذهب، وصغار المستثمرين.
-- السوق محل التركيز: السوق العالمي وانعكاسه المباشر على مصر والمنطقة العربية.
-- النبرة واللغة: تحليلية مبسطة، باللغة العربية الفصحى المعاصرة السلسة (بدون تعقيد أكاديمي وبدون عامية).
-- الطول المطلوب: مقال موسع ومتماسك يقارب 1000 كلمة (في حدود 900 إلى 1100 كلمة) مقسم إلى فقرات قصيرة وعناوين فرعية واضحة ومريحة للقراءة على الهاتف.
-
-قواعد الكتابة الصارمة:
-1. ابدأ بعنوان خبري جذاب ومقدمة قوية ومشوقة تشد القارئ من أول سطرين.
-2. قسّم المقال إلى عناوين فرعية واضحة تغطي: المشهد السعري والبيانات، العوامل الاقتصادية الكلية، انعكاس السوق العالمي على الأسواق المحلية، توازن وجهات النظر في السوق، وخلاصة وتوصية عملية.
-3. بسّط المصطلحات الاقتصادية المعقدة (مثل التضخم، أسعار الفائدة، عوائد السندات، والسيولة) بأمثلة واضحة من الواقع اليومي وحياة الناس.
-4. الالتزام التام بالأرقام المرفقة فقط؛ لا تخترع أي إحصائيات أو أسعار صرف أو أرقام غير موجودة في البيانات، واذكر بوضوح أن التسعير المحلي يتأثر بعوامل العرض والطلب المحلي وسعر الصرف والمصنعية.
-5. اعرض أكثر من وجهة نظر قبل الوصول لرأيك أو تحليلك (مثلاً: رؤية من يراهنون على استمرار الطلب والتحوط مقابل رؤية من يفضلون التريث أو جني الأرباح المرحلي).
-6. اربط الأسباب بالنتائج بوضوح (لماذا يحدث هذا التحرك؟ وما أثره الفعلي على قرارات الادخار والشراء والبيع؟).
-7. اختم بخلاصة واضحة وتوصية عملية متزنة أو سؤال يفتح التفكير للقراء، مع تنويه قصير في النهاية بأن الأسعار استرشادية وتتغير لحظياً.
-8. تجنب الحشو والتكرار والمقدمات الإنشائية المبتذلة، واجعل كل فقرة تضيف فكرة جديدة وملموسة.
-9. التنسيق: استخدم وسوم HTML البسيطة فقط للتأكيد: <b>للنص العريض</b> و <i>للنص المائل</i>. يُمنع استخدام علامات Markdown مثل ** أو ## أو الجداول، ويُمنع استخدام وسوم <ul> أو <li> أو <p> أو الجداول، ولا تطرح أي أسئلة تمهيدية بل اكتب المقال النهائي مباشرة.`;
-
-  const marketBrief = gold.available
-    ? `البيانات اللحظية المعتمدة للمقال:
-- اتجاه السوق: ${gold.trend} (${gold.trendEmoji})
-- سعر الأونصة عالمياً: ${gold.ounceUsd} دولار
-- مقدار التغير اليومي: ${gold.changeUsd} دولار (${gold.changePercent})
-- السعر العالمي المرجعي للجرام (محسوب رياضياً):
-  - عيار 24: ${gold.gram24Usd} دولار
-  - عيار 21: ${gold.gram21Usd} دولار
-  - عيار 18: ${gold.gram18Usd} دولار
-- توقيت الجلسة التداولية: ${gold.session}
-- الطابع الزمني للبيانات: ${gold.date}`
-    : `البيانات اللحظية المعتمدة للمقال:
-- حالة المصدر: تعذر سحب التسعير اللحظي من المزود الخارجي وقت النشر (${gold.date}).
-- توقيت الجلسة التداولية: ${gold.session}
-- توجيه خاص: ركّز في المقال على تحليل المحركات الاقتصادية لأسعار الذهب وسلوك المدخرين في هذه الفترة دون ذكر أي أرقام سعرية محددة للأونصة أو الجرام.`;
-
-  const userPrompt = `اكتب المقال الاقتصادي الكامل الآن (حوالي 1000 كلمة) بناءً على هذه المعطيات فقط:\n\n${marketBrief}`;
-
-  const rawArticle = await callGroqChat([
-    { role: 'system', content: systemPrompt },
-    { role: 'user', content: userPrompt }
-  ], 3200, 0.5);
-
-  return sanitizeTelegramHtml(rawArticle);
-}
-
-async function generateImagePrompt(gold, articleHtml) {
-  const plainSnippet = stripHtmlTags(articleHtml).slice(0, 600);
-  const trendHint = gold.available
-    ? `${gold.trend} (${gold.changePercent}), gold bullion bars and coins`
-    : 'gold market analysis, bullion bars and coins';
-
-  try {
-    const promptText = await callGroqChat([
-      {
-        role: 'system',
-        content: 'Write a single concise English image-generation prompt (max 18 words) for an editorial financial illustration of gold markets. No quotes, no markdown, no text inside the image.'
-      },
-      {
-        role: 'user',
-        content: `Market context: ${trendHint}\nArticle summary: ${plainSnippet}`
-      }
-    ], 80, 0.4);
-
-    const cleaned = promptText.replace(/["`*\n]/g, ' ').trim();
-    if (cleaned.length >= 10) return cleaned;
-  } catch (err) {
-    console.warn('استخدام وصف الصورة الافتراضي:', err.message);
-  }
-
-  return 'Luxury gold bullion bars and coins on dark financial table, warm lighting, editorial photography';
-}
-
-async function generateArticleImageBuffer(imagePrompt) {
-  const seed = Math.floor(Math.random() * 1000000);
-  const fullPrompt = `${imagePrompt}, clean editorial composition, no text, no watermark, high detail`;
-  const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(fullPrompt)}?width=1280&height=720&seed=${seed}&nologo=true`;
-
-  try {
-    console.log('جاري توليد صورة المقال...');
-    const res = await fetchWithRetry(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0',
-        'Accept': 'image/*'
-      }
-    }, 1, CONFIG.IMAGE_TIMEOUT_MS);
-
-    if (!res?.ok) {
-      console.warn(`تعذر توليد الصورة (الحالة: ${res?.status ?? 'خطأ شبكة'})، سيتم نشر المقال النصي فقط.`);
-      return null;
-    }
-
-    const buffer = Buffer.from(await res.arrayBuffer());
-    if (buffer.byteLength < 2000) {
-      console.warn('حجم الصورة المستلمة صغير جداً، سيتم نشر المقال النصي فقط.');
-      return null;
-    }
-
-    return buffer;
-  } catch (err) {
-    console.warn(`تجاوز وقت أو خطأ أثناء توليد الصورة (${err.message})، سيتم نشر المقال النصي فقط.`);
-    return null;
-  }
-}
-
-async function sendPhotoCaption(imageBuffer, gold) {
+async function sendPhotoToTelegram(imageBuffer, gold) {
   const caption = gold.available
-    ? `<b>تقرير الذهب اليومي ${gold.trendEmoji}</b>\nالأونصة: <b>${gold.ounceUsd}$</b> (${gold.changePercent})\nالمقال التحليلي الكامل في الرسالة التالية 👇`
-    : `<b>تقرير الذهب اليومي 🥇</b>\nقراءة تحليلية شاملة لحركة السوق في الرسالة التالية 👇`;
+    ? `<b>نشرة سهم الذهب اليومية ${gold.trendEmoji}</b>\n\n• الأونصة عالمياً: <b>${gold.ounceUsd} دولار</b> (${gold.changePercent})\n• عيار 24: <b>${gold.gram24Usd}$</b> | عيار 21: <b>${gold.gram21Usd}$</b> | عيار 18: <b>${gold.gram18Usd}$</b>\n\n👇 المقال التحليلي الشامل في الرسالة التالية`
+    : `<b>نشرة سهم الذهب اليومية 🥇</b>\n\n👇 المقال التحليلي الشامل لحركة الأسواق في الرسالة التالية`;
 
   const formData = new FormData();
   formData.append('chat_id', CONFIG.TELEGRAM_CHAT_ID);
   formData.append('caption', caption);
   formData.append('parse_mode', 'HTML');
-  formData.append('photo', new Blob([imageBuffer], { type: 'image/jpeg' }), 'gold-report.jpg');
+  formData.append('photo', new Blob([imageBuffer], { type: 'image/png' }), 'sahm-elzahab-report.png');
 
   const url = `https://api.telegram.org/bot${CONFIG.TELEGRAM_BOT_TOKEN}/sendPhoto`;
   const res = await fetchWithRetry(url, {
     method: 'POST',
     body: formData
-  }, 1, CONFIG.REQUEST_TIMEOUT_MS);
+  });
 
   if (!res?.ok) {
     const errText = res ? await res.text() : 'انقطع الاتصال بخادم تليجرام';
-    console.warn(`تعذر إرسال الصورة إلى تليجرام (${errText})، سيتم إرسال المقال النصي.`);
+    throw new Error(`فشل إرسال الصورة إلى تليجرام: ${errText}`);
   }
 }
 
-async function sendToTelegram(htmlText) {
+async function sendArticleToTelegram(htmlText) {
   const url = `https://api.telegram.org/bot${CONFIG.TELEGRAM_BOT_TOKEN}/sendMessage`;
   const MAX_LENGTH = 4000;
 
@@ -460,7 +458,6 @@ async function sendToTelegram(htmlText) {
 
     const errText = res ? await res.text() : 'انقطع الاتصال بخادم تليجرام';
     if (res?.status === 400 && errText.includes("can't parse entities")) {
-      console.warn('تعذر تحليل وسوم HTML في جزء الرسالة، جاري الإرسال كنص عادي كخطة بديلة...');
       const plainRes = await fetchWithRetry(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -471,11 +468,9 @@ async function sendToTelegram(htmlText) {
         })
       });
       if (plainRes?.ok) continue;
-      const plainErr = plainRes ? await plainRes.text() : errText;
-      throw new Error(`فشل الإرسال لتليجرام: ${plainErr}`);
     }
 
-    throw new Error(`فشل الإرسال لتليجرام: ${errText}`);
+    throw new Error(`فشل إرسال المقال لتليجرام: ${errText}`);
   }
 }
 
@@ -486,19 +481,16 @@ async function main() {
   const gold = await fetchGoldData();
   console.log('ملخص المؤشرات:', gold);
 
-  console.log('2/4 جاري صياغة المقال الاقتصادي عبر Groq...');
+  console.log('2/4 جاري تصميم بطاقة الأسعار البصرية...');
+  const cardBuffer = await createGoldCardPng(gold);
+
+  console.log('3/4 جاري صياغة المقال الاقتصادي عبر Groq...');
   const article = await generateEditorialArticle(gold);
 
-  console.log('3/4 جاري تجهيز وتوليد الصورة...');
-  const imagePrompt = await generateImagePrompt(gold, article);
-  const imageBuffer = await generateArticleImageBuffer(imagePrompt);
-  if (imageBuffer) {
-    await sendPhotoCaption(imageBuffer, gold);
-  }
-
-  console.log('4/4 جاري نشر المقال في قناة تليجرام...');
-  await sendToTelegram(article);
-  console.log('تم نشر المقال والملحقات بنجاح!');
+  console.log('4/4 جاري نشر الصورة والمقال في قناة تليجرام...');
+  await sendPhotoToTelegram(cardBuffer, gold);
+  await sendArticleToTelegram(article);
+  console.log('تم نشر البطاقة البصرية والمقال الصحفي بنجاح!');
 }
 
 main().catch((err) => {
