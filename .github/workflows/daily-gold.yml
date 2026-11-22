@@ -1,0 +1,26 @@
+name: Daily Gold Article Bot
+
+on:
+  schedule:
+    # يعمل يومياً الساعة 10:00 صباحاً بتوقيت UTC (12:00 ظهراً بتوقيت القاهرة)
+    - cron: '0 10 * * *'
+  workflow_dispatch:
+
+jobs:
+  publish-article:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Run Gold Article Bot
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: node bot.js
