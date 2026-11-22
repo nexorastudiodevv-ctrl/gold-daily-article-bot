@@ -332,4 +332,34 @@ async function sendToTelegram(htmlText) {
       body: JSON.stringify({
         chat_id: CONFIG.TELEGRAM_CHAT_ID,
         text: chunk,
-        parse
+        parse_mode: 'HTML',
+        disable_web_page_preview: true
+      })
+    });
+
+    if (!res?.ok) {
+      const errText = res ? await res.text() : 'انقطع الاتصال بخادم تليجرام';
+      throw new Error(`فشل الإرسال لتليجرام: ${errText}`);
+    }
+  }
+}
+
+async function main() {
+  validateEnvironment();
+
+  console.log('1/3 جاري سحب وحساب مؤشرات الذهب العالمية...');
+  const gold = await fetchGoldData();
+  console.log('ملخص المؤشرات:', gold);
+
+  console.log('2/3 جاري صياغة المقال الاقتصادي عبر Groq...');
+  const article = await generateEditorialArticle(gold);
+
+  console.log('3/3 جاري النشر في قناة تليجرام...');
+  await sendToTelegram(article);
+  console.log('تم نشر المقال الصحفي بنجاح!');
+}
+
+main().catch((err) => {
+  console.error('❌ توقف التنفيذ بسبب خطأ:', err.message);
+  process.exit(1);
+});
