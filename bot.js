@@ -171,7 +171,108 @@ async function fetchGoldData() {
   };
 }
 
-async function createGoldCardPng(gold) {
+
+// ───────────────────────── أدوات الرسم ─────────────────────────
+
+const RIGHT = 1160;
+const LEFT = 120;
+
+function esc(s) {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+// تقسيم النص العربي لأسطر حسب عدد الحروف (مع اقتطاع بـ … لو زاد عن الحد)
+function wrapText(text, maxChars, maxLines) {
+  const words = String(text).replace(/\s+/g, ' ').trim().split(' ');
+  const lines = [];
+  let current = '';
+  for (const w of words) {
+    const next = current ? `${current} ${w}` : w;
+    if (next.length > maxChars && current) {
+      lines.push(current);
+      current = w;
+    } else {
+      current = next;
+    }
+  }
+  if (current) lines.push(current);
+  if (lines.length > maxLines) {
+    const cut = lines.slice(0, maxLines);
+    cut[maxLines - 1] = cut[maxLines - 1].replace(/[\s.,،:؛]*$/, '') + '…';
+    return cut;
+  }
+  return lines;
+}
+
+function arText(x, y, size, fill, content, opts = {}) {
+  const anchor = opts.anchor || 'end';
+  const weight = opts.weight || 'bold';
+  // ملاحظة: لا نستخدم direction="rtl" لأنه يعكس معنى text-anchor في SVG ويُخرج النص عن الإطار
+  return `<text x="${x}" y="${y}" text-anchor="${anchor}" font-family="${CARD_FONT}" font-size="${size}" font-weight="${weight}" fill="${fill}">${esc(content)}</text>`;
+}
+
+function goldBars(x, y, s = 1) {
+  const bar = (dx, dy) =>
+    `<g transform="translate(${x + dx * s},${y + dy * s}) scale(${s})">` +
+    `<polygon points="0,30 90,30 110,0 20,0" fill="url(#gold)"/>` +
+    `<polygon points="0,30 90,30 90,62 0,62" fill="#D97706"/>` +
+    `<polygon points="90,30 110,0 110,32 90,62" fill="#B45309"/></g>`;
+  return bar(0, 64) + bar(100, 64) + bar(50, 0);
+}
+
+function svgShell(gold, inner) {
+  return [
+    `<svg width="1280" height="720" viewBox="0 0 1280 720" xmlns="http://www.w3.org/2000/svg">`,
+    `<defs>`,
+    `<linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#090D16"/><stop offset="55%" stop-color="#111827"/><stop offset="100%" stop-color="#1E293B"/></linearGradient>`,
+    `<linearGradient id="gold" x1="0%" y1="0%" x2="100%" y2="0%"><stop offset="0%" stop-color="#FEF08A"/><stop offset="50%" stop-color="#F59E0B"/><stop offset="100%" stop-color="#D97706"/></linearGradient>`,
+    `<radialGradient id="glow" cx="15%" cy="85%" r="60%"><stop offset="0%" stop-color="#F59E0B" stop-opacity="0.18"/><stop offset="100%" stop-color="#F59E0B" stop-opacity="0"/></radialGradient>`,
+    `</defs>`,
+    `<rect width="1280" height="720" fill="url(#bg)"/>`,
+    `<rect width="1280" height="720" fill="url(#glow)"/>`,
+    `<rect x="40" y="40" width="1200" height="640" rx="28" fill="#0F172A" fill-opacity="0.82" stroke="#F59E0B" stroke-opacity="0.4" stroke-width="2"/>`,
+    `<rect x="1174" y="84" width="10" height="40" rx="5" fill="url(#gold)"/>`,
+    arText(1156, 113, 28, '#F8FAFC', 'سهم الذهب | أسعار الذهب'),
+    arText(LEFT, 113, 22, '#94A3B8', gold.dateLabel, { anchor: 'start', rtl: false }),
+    `<line x1="84" y1="146" x2="1196" y2="146" stroke="#F59E0B" stroke-opacity="0.25" stroke-width="1.5"/>`,
+    inner,
+    arText(640, 650, 20, '#FDE047', '@sahm_elzahab', { anchor: 'middle', rtl: false }),
+    `</svg>`
+  ].join('\n');
+}
+
+// ───────────────────────── البطاقات ─────────────────────────
+
+// 1) غلاف المقال
+function buildCoverSvg(gold, insights) {
+  const lines = wrapText(insights.headline, 34, 3);
+  let inner = arText(RIGHT, 205, 24, '#F59E0B', 'تحليل اقتصادي');
+  lines.forEach((line, i) => {
+    inner += arText(RIGHT, 275 + i * 72, 58, '#F8FAFC', line);
+  });
+  const lineBottom = 275 + (lines.length - 1) * 72;
+  inner += `<rect x="${RIGHT - 170}" y="${lineBottom + 24}" width="170" height="6" rx="3" fill="url(#gold)"/>`;
+
+  inner += goldBars(LEFT, 470, 1.15);
+
+  if (gold.available) {
+    inner += `<rect x="520" y="490" width="640" height="110" rx="20" fill="#1E293B" stroke="${gold.trendColor}" stroke-opacity="0.6" stroke-width="2"/>`;
+    inner += arText(1130, 535, 22, '#94A3B8', 'سعر الأونصة عالمياً');
+    inner += arText(1130, 585, 50, '#FDE047', `$${gold.ounceUsd}`, { rtl: false });
+    inner += arText(560, 548, 28, gold.trendColor, gold.changePercent, { anchor: 'start', rtl: false });
+    inner += arText(560, 585, 22, '#E2E8F0', gold.trend, { anchor: 'start' });
+  } else {
+    inner += arText(RIGHT, 560, 30, '#94A3B8', insights.outlook ? 'تقرير يومي عن حركة الذهب' : '');
+  }
+  return svgShell(gold, inner);
+}
+
+// 2) بطاقة الأسعار
+function buildPricesSvg(gold) {
   const ounceText = gold.available ? `$${gold.ounceUsd}` : 'سعر الذهب';
   const changeText = gold.available ? `${gold.changeUsd}$ (${gold.changePercent})` : 'تقرير يومي';
   const g24 = gold.available ? `$${gold.gram24Usd}` : '--';
@@ -179,55 +280,78 @@ async function createGoldCardPng(gold) {
   const g18 = gold.available ? `$${gold.gram18Usd}` : '--';
 
   let trendAr = 'استقرار نسبي';
-  if (gold.available && gold.pctNumber > 0.15) {
-    trendAr = 'صعود السوق';
-  } else if (gold.available && gold.pctNumber < -0.15) {
-    trendAr = 'هبوط السوق';
+  if (gold.available && gold.pctNumber > 0.15) trendAr = 'صعود السوق';
+  else if (gold.available && gold.pctNumber < -0.15) trendAr = 'هبوط السوق';
+
+  let inner = '';
+  inner += arText(1156, 205, 22, '#F59E0B', 'سعر الأونصة عالمياً (دولار)');
+  inner += `<text x="1156" y="300" text-anchor="end" font-family="${CARD_FONT}" font-size="92" font-weight="bold" fill="url(#gold)">${esc(ounceText)}</text>`;
+  inner += `<rect x="796" y="336" width="360" height="52" rx="12" fill="${gold.trendColor}" fill-opacity="0.16" stroke="${gold.trendColor}" stroke-width="2"/>`;
+  inner += arText(976, 372, 24, gold.trendColor, changeText, { anchor: 'middle', rtl: false });
+  inner += `<rect x="456" y="336" width="316" height="52" rx="12" fill="#1E293B" stroke="#334155" stroke-width="2"/>`;
+  inner += arText(614, 372, 23, '#E2E8F0', trendAr, { anchor: 'middle' });
+  inner += goldBars(130, 195, 1.5);
+
+  const cards = [
+    { x: 804, label: 'عيار 24 / جرام', val: g24 },
+    { x: 444, label: 'عيار 21 / جرام', val: g21 },
+    { x: 84, label: 'عيار 18 / جرام', val: g18 }
+  ];
+  for (const c of cards) {
+    inner += `<rect x="${c.x + 40}" y="455" width="312" height="162" rx="20" fill="#1E293B" stroke="#F59E0B" stroke-opacity="0.3" stroke-width="1.5"/>`;
+    inner += arText(c.x + 40 + 156, 505, 24, '#94A3B8', c.label, { anchor: 'middle', weight: 'normal' });
+    inner += arText(c.x + 40 + 156, 574, 48, '#FDE047', c.val, { anchor: 'middle', rtl: false });
   }
+  return svgShell(gold, inner);
+}
 
-  const svg = [
-    `<svg width="1280" height="720" viewBox="0 0 1280 720" xmlns="http://www.w3.org/2000/svg">`,
-    `<defs>`,
-    `<linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">`,
-    `<stop offset="0%" stop-color="#090D16"/>`,
-    `<stop offset="55%" stop-color="#111827"/>`,
-    `<stop offset="100%" stop-color="#1E293B"/>`,
-    `</linearGradient>`,
-    `<linearGradient id="gold" x1="0%" y1="0%" x2="100%" y2="0%">`,
-    `<stop offset="0%" stop-color="#FEF08A"/>`,
-    `<stop offset="50%" stop-color="#F59E0B"/>`,
-    `<stop offset="100%" stop-color="#D97706"/>`,
-    `</linearGradient>`,
-    `</defs>`,
-    `<rect width="1280" height="720" fill="url(#bg)"/>`,
-    `<rect x="40" y="40" width="1200" height="640" rx="28" fill="#0F172A" fill-opacity="0.82" stroke="#F59E0B" stroke-opacity="0.4" stroke-width="2"/>`,
-    `<rect x="1174" y="84" width="10" height="40" rx="5" fill="url(#gold)"/>`,
-    `<text x="1156" y="113" text-anchor="end" direction="rtl" font-family="${CARD_FONT}" font-size="25" font-weight="bold" fill="#F8FAFC">سهم الذهب | أسعار الذهب</text>`,
-    `<text x="84" y="113" text-anchor="start" font-family="${CARD_FONT}" font-size="22" font-weight="bold" fill="#94A3B8">${gold.dateLabel}</text>`,
-    `<text x="1176" y="192" text-anchor="end" direction="rtl" font-family="${CARD_FONT}" font-size="22" font-weight="bold" fill="#F59E0B">سعر الأونصة عالمياً (دولار)</text>`,
-    `<text x="1176" y="298" text-anchor="end" font-family="${CARD_FONT}" font-size="92" font-weight="bold" fill="url(#gold)">${ounceText}</text>`,
-    `<rect x="816" y="336" width="360" height="52" rx="12" fill="${gold.trendColor}" fill-opacity="0.16" stroke="${gold.trendColor}" stroke-width="2"/>`,
-    `<text x="996" y="370" text-anchor="middle" font-family="${CARD_FONT}" font-size="23" font-weight="bold" fill="${gold.trendColor}">${changeText}</text>`,
-    `<rect x="476" y="336" width="316" height="52" rx="12" fill="#1E293B" stroke="#334155" stroke-width="2"/>`,
-    `<text x="634" y="370" text-anchor="middle" direction="rtl" font-family="${CARD_FONT}" font-size="21" font-weight="bold" fill="#E2E8F0">${trendAr}</text>`,
-    `<rect x="84" y="168" width="306" height="220" rx="22" fill="#1E293B" stroke="#F59E0B" stroke-opacity="0.4" stroke-width="2"/>`,
-    `<polygon points="237,203 316,252 237,301 158,252" fill="url(#gold)"/>`,
-    `<polygon points="158,252 237,301 237,343 158,294" fill="#B45309"/>`,
-    `<polygon points="316,252 237,301 237,343 316,294" fill="#D97706"/>`,
-    `<text x="237" y="371" text-anchor="middle" font-family="${CARD_FONT}" font-size="18" font-weight="bold" fill="#FDE047">@sahm_elzahab</text>`,
-    `<rect x="844" y="455" width="352" height="162" rx="20" fill="#1E293B" stroke="#F59E0B" stroke-opacity="0.3" stroke-width="1.5"/>`,
-    `<text x="1020" y="502" text-anchor="middle" direction="rtl" font-family="${CARD_FONT}" font-size="22" fill="#94A3B8">عيار 24 / جرام</text>`,
-    `<text x="1020" y="572" text-anchor="middle" font-family="${CARD_FONT}" font-size="44" font-weight="bold" fill="#FDE047">${g24}</text>`,
-    `<rect x="464" y="455" width="352" height="162" rx="20" fill="#1E293B" stroke="#F59E0B" stroke-opacity="0.3" stroke-width="1.5"/>`,
-    `<text x="640" y="502" text-anchor="middle" direction="rtl" font-family="${CARD_FONT}" font-size="22" fill="#94A3B8">عيار 21 / جرام</text>`,
-    `<text x="640" y="572" text-anchor="middle" font-family="${CARD_FONT}" font-size="44" font-weight="bold" fill="#FDE047">${g21}</text>`,
-    `<rect x="84" y="455" width="352" height="162" rx="20" fill="#1E293B" stroke="#F59E0B" stroke-opacity="0.3" stroke-width="1.5"/>`,
-    `<text x="260" y="502" text-anchor="middle" direction="rtl" font-family="${CARD_FONT}" font-size="22" fill="#94A3B8">عيار 18 / جرام</text>`,
-    `<text x="260" y="572" text-anchor="middle" font-family="${CARD_FONT}" font-size="44" font-weight="bold" fill="#FDE047">${g18}</text>`,
-    `</svg>`
-  ].join('\n');
+// 3) أبرز النقاط
+function buildPointsSvg(gold, insights) {
+  let inner = arText(RIGHT, 205, 44, '#F59E0B', 'أبرز نقاط المقال');
+  const points = insights.points.slice(0, 4);
+  const top = 235;
+  const step = 98;
+  points.forEach((p, i) => {
+    const y = top + i * step;
+    inner += `<rect x="${LEFT}" y="${y}" width="${RIGHT - LEFT}" height="82" rx="16" fill="#1E293B" stroke="#F59E0B" stroke-opacity="0.25" stroke-width="1.5"/>`;
+    inner += `<circle cx="${RIGHT - 44}" cy="${y + 41}" r="24" fill="url(#gold)"/>`;
+    inner += `<text x="${RIGHT - 44}" y="${y + 51}" text-anchor="middle" font-family="${CARD_FONT}" font-size="28" font-weight="bold" fill="#0F172A">${i + 1}</text>`;
+    const lines = wrapText(p, 62, 2);
+    const size = lines.length > 1 ? 26 : 30;
+    const base = lines.length > 1 ? y + 34 : y + 51;
+    lines.forEach((line, li) => {
+      inner += arText(RIGHT - 90, base + li * 34, size, '#F8FAFC', line, { weight: 'normal' });
+    });
+  });
+  return svgShell(gold, inner);
+}
 
-  return await sharp(Buffer.from(svg)).png().toBuffer();
+// 4) الخلاصة والتوقعات
+function buildOutlookSvg(gold, insights) {
+  let inner = arText(RIGHT, 215, 44, '#F59E0B', 'الخلاصة والتوقعات');
+  inner += `<rect x="${LEFT}" y="250" width="${RIGHT - LEFT}" height="300" rx="24" fill="#1E293B" stroke="#F59E0B" stroke-opacity="0.35" stroke-width="2"/>`;
+  inner += `<rect x="${RIGHT - 20}" y="278" width="8" height="244" rx="4" fill="url(#gold)"/>`;
+  const lines = wrapText(insights.outlook, 44, 4);
+  const startY = 250 + 150 - ((lines.length - 1) * 54) / 2 + 12;
+  lines.forEach((line, i) => {
+    inner += arText(RIGHT - 50, startY + i * 54, 40, '#F8FAFC', line, { weight: 'normal' });
+  });
+  inner += arText(RIGHT, 596, 20, '#64748B', 'للتوعية والمعلومات فقط، وليست توصية استثمارية', { weight: 'normal' });
+  return svgShell(gold, inner);
+}
+
+async function svgToPng(svg) {
+  return sharp(Buffer.from(svg)).png().toBuffer();
+}
+
+async function createArticleImages(gold, insights) {
+  const svgs = [
+    buildCoverSvg(gold, insights),
+    buildPricesSvg(gold),
+    buildPointsSvg(gold, insights),
+    buildOutlookSvg(gold, insights)
+  ];
+  return Promise.all(svgs.map(svgToPng));
 }
 
 function isNonChatModel(modelId) {
@@ -300,23 +424,14 @@ function stripHtmlTags(htmlText) {
     .replace(/&quot;/g, '"');
 }
 
-async function generateEditorialArticle(gold) {
-  const systemPrompt = [
-    'أنت خبير اقتصادي بخبرة تزيد عن 20 عامًا في الاقتصاد الكلي والجزئي والأسواق المالية، وكاتب مقالات محترف تكتب لصحف ومجلات اقتصادية كبرى.',
-    'اكتب مقالاً اقتصادياً تحليلياً معمقاً وشاملاً حول حركة أسعار الذهب وتأثيرها على السوق المحلي والعربي، للنشر في قناة تليجرام (حوالي 900 إلى 1100 كلمة).',
-    'استخدم <b> و <i> فقط للتنسيق، واستخدم "•" للقوائم بدون استخدام ** أو ## أو شرطات -.'
-  ].join('\n');
 
-  const marketBrief = gold.available
-    ? [
-        `اتجاه السوق: ${gold.trend} (${gold.trendEmoji})`,
-        `سعر الأونصة عالمياً: ${gold.ounceUsd} دولار`,
-        `التغير اليومي: ${gold.changeUsd} دولار (${gold.changePercent})`,
-        `عيار 24: ${gold.gram24Usd} دولار | عيار 21: ${gold.gram21Usd} دولار | عيار 18: ${gold.gram18Usd} دولار`,
-        `الجلسة التداولية: ${gold.session}`
-      ].join('\n')
-    : `تعذر سحب التسعير اللحظي وقت النشر. الجلسة التداولية: ${gold.session}`;
+// ───────────────────────── Groq ─────────────────────────
 
+function cleanModelOutput(text) {
+  return String(text || '').replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+}
+
+async function callGroq(messages, { temperature = 0.5, maxTokens = 3200 } = {}) {
   const candidates = await resolveGroqModelCandidates();
   let lastError = null;
 
@@ -328,15 +443,7 @@ async function generateEditorialArticle(gold) {
           'Authorization': `Bearer ${CONFIG.GROQ_API_KEY}`,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({
-          model,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: `اكتب المقال بناءً على هذه المعطيات فقط:\n\n${marketBrief}` }
-          ],
-          temperature: 0.5,
-          max_tokens: 3200
-        })
+        body: JSON.stringify({ model, messages, temperature, max_tokens: maxTokens })
       });
 
       if (!res?.ok) {
@@ -345,35 +452,132 @@ async function generateEditorialArticle(gold) {
       }
 
       const data = await res.json();
-      const rawArticle = data.choices?.[0]?.message?.content;
-      if (rawArticle) return sanitizeTelegramHtml(rawArticle);
+      const content = cleanModelOutput(data.choices?.[0]?.message?.content);
+      if (content) return content;
     } catch (err) {
       lastError = err;
     }
   }
-
-  throw lastError || new Error('فشل توليد المقال من جميع النماذج المتاحة في Groq');
+  throw lastError || new Error('فشل الاتصال بجميع النماذج المتاحة في Groq');
 }
 
-async function sendPhotoToTelegram(pngBuffer, gold) {
+function buildMarketBrief(gold) {
+  return gold.available
+    ? [
+        `اتجاه السوق: ${gold.trend} (${gold.trendEmoji})`,
+        `سعر الأونصة عالمياً: ${gold.ounceUsd} دولار`,
+        `التغير اليومي: ${gold.changeUsd} دولار (${gold.changePercent})`,
+        `عيار 24: ${gold.gram24Usd} دولار | عيار 21: ${gold.gram21Usd} دولار | عيار 18: ${gold.gram18Usd} دولار`,
+        `الجلسة التداولية: ${gold.session}`
+      ].join('\n')
+    : `تعذر سحب التسعير اللحظي وقت النشر. الجلسة التداولية: ${gold.session}`;
+}
+
+async function generateEditorialArticle(gold) {
+  const systemPrompt = [
+    'أنت خبير اقتصادي بخبرة تزيد عن 20 عامًا في الاقتصاد الكلي والجزئي والأسواق المالية، وكاتب مقالات محترف تكتب لصحف ومجلات اقتصادية كبرى.',
+    'اكتب مقالاً اقتصادياً تحليلياً معمقاً وشاملاً حول حركة أسعار الذهب وتأثيرها على السوق المحلي والعربي، للنشر في قناة تليجرام (حوالي 900 إلى 1100 كلمة).',
+    'ابدأ المقال بعنوان جذاب داخل <b></b> في السطر الأول.',
+    'استخدم <b> و <i> فقط للتنسيق، واستخدم "•" للقوائم بدون استخدام ** أو ## أو شرطات -.'
+  ].join('\n');
+
+  const raw = await callGroq(
+    [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: `اكتب المقال بناءً على هذه المعطيات فقط:\n\n${buildMarketBrief(gold)}` }
+    ],
+    { temperature: 0.5, maxTokens: 3200 }
+  );
+  return sanitizeTelegramHtml(raw);
+}
+
+// استخراج عنوان + نقاط + خلاصة من المقال نفسه ليكون محتوى الصور مطابقاً له
+function defaultInsights(gold) {
+  return {
+    headline: gold.available
+      ? `الذهب ${gold.trend === 'استقرار نسبي' ? 'يستقر' : gold.trend === 'صعود' ? 'يصعد' : 'يهبط'} عند ${gold.ounceUsd} دولار للأونصة`
+      : 'قراءة في حركة أسعار الذهب اليوم',
+    points: [
+      'متابعة حركة الأونصة عالمياً هي المؤشر الأول لسعر الذهب محلياً',
+      'سعر الدولار وقرارات الفائدة من أهم المحركات اليومية للمعدن',
+      'الطلب على الملاذ الآمن يرتفع مع زيادة التوترات الاقتصادية',
+      'الفروق بين الأعيرة تعتمد على نسبة نقاء الذهب في كل عيار'
+    ],
+    outlook: 'يبقى الذهب أداة تحوط رئيسية، والقرارات الاستثمارية تحتاج متابعة مستمرة لتحركات الدولار والفائدة.'
+  };
+}
+
+function parseInsights(text) {
+  const match = text.match(/\{[\s\S]*\}/);
+  if (!match) return null;
+  const obj = JSON.parse(match[0]);
+  const headline = String(obj.headline || '').trim();
+  const outlook = String(obj.outlook || '').trim();
+  const points = Array.isArray(obj.points)
+    ? obj.points.map((p) => String(p).trim()).filter(Boolean)
+    : [];
+  if (!headline || !outlook || points.length < 3) return null;
+  return { headline, outlook, points: points.slice(0, 4) };
+}
+
+async function generateInsights(gold, articleHtml) {
+  try {
+    const articleText = stripHtmlTags(articleHtml).slice(0, 6000);
+    const raw = await callGroq(
+      [
+        {
+          role: 'system',
+          content: [
+            'أنت محرر يلخص مقالات اقتصادية لبطاقات إنفوجرافيك.',
+            'أعد JSON صالحاً فقط بدون أي نص آخر وبدون علامات ```، بهذا الشكل بالضبط:',
+            '{"headline":"عنوان قوي لا يتجاوز 60 حرفاً","points":["نقطة 1","نقطة 2","نقطة 3","نقطة 4"],"outlook":"خلاصة وتوقع في جملة أو جملتين لا تتجاوز 150 حرفاً"}',
+            'كل نقطة لا تتجاوز 90 حرفاً، وبدون أي وسوم HTML أو رموز تنسيق، واعتمد على المقال فقط.'
+          ].join('\n')
+        },
+        { role: 'user', content: `المقال:\n\n${articleText}` }
+      ],
+      { temperature: 0.3, maxTokens: 800 }
+    );
+    return parseInsights(raw) || defaultInsights(gold);
+  } catch (err) {
+    console.warn(`تعذر توليد ملخص الصور، سيتم استخدام ملخص افتراضي (${err.message})`);
+    return defaultInsights(gold);
+  }
+}
+
+// ───────────────────────── تليجرام ─────────────────────────
+
+async function sendAlbumToTelegram(pngBuffers, gold) {
   const caption = gold.available
     ? `<b>تقرير الذهب اليومي ${gold.trendEmoji}</b>\n• الأونصة: <b>${gold.ounceUsd}$</b> (${gold.changePercent})\n• عيار 24: <b>${gold.gram24Usd}$</b> | عيار 21: <b>${gold.gram21Usd}$</b>`
     : '<b>تقرير الذهب اليومي 🥇</b>';
 
   const formData = new FormData();
   formData.append('chat_id', CONFIG.TELEGRAM_CHAT_ID);
-  formData.append('caption', caption);
-  formData.append('parse_mode', 'HTML');
-  formData.append('photo', new Blob([pngBuffer], { type: 'image/png' }), 'gold-report.png');
+
+  const media = pngBuffers.map((_, i) => {
+    const item = { type: 'photo', media: `attach://img${i}` };
+    if (i === 0) {
+      item.caption = caption;
+      item.parse_mode = 'HTML';
+    }
+    return item;
+  });
+  formData.append('media', JSON.stringify(media));
+  pngBuffers.forEach((buf, i) => {
+    formData.append(`img${i}`, new Blob([buf], { type: 'image/png' }), `gold-${i + 1}.png`);
+  });
 
   const res = await fetchWithRetry(
-    `https://api.telegram.org/bot${CONFIG.TELEGRAM_BOT_TOKEN}/sendPhoto`,
-    { method: 'POST', body: formData }
+    `https://api.telegram.org/bot${CONFIG.TELEGRAM_BOT_TOKEN}/sendMediaGroup`,
+    { method: 'POST', body: formData },
+    2,
+    45000
   );
 
   if (!res?.ok) {
     const errText = res ? await res.text() : 'انقطع الاتصال بخادم تليجرام';
-    throw new Error(`فشل إرسال الصورة إلى تليجرام: ${errText}`);
+    throw new Error(`فشل إرسال الصور إلى تليجرام: ${errText}`);
   }
 }
 
@@ -430,17 +634,36 @@ async function sendToTelegram(htmlText) {
   }
 }
 
+// ───────────────────────── التشغيل ─────────────────────────
+
 async function main() {
   validateEnvironment();
   const gold = await fetchGoldData();
-  const pngBuffer = await createGoldCardPng(gold);
-  await sendPhotoToTelegram(pngBuffer, gold);
+
+  // نولد المقال أولاً، ثم نبني الصور من محتواه
   const article = await generateEditorialArticle(gold);
+  const insights = await generateInsights(gold, article);
+  const images = await createArticleImages(gold, insights);
+
+  await sendAlbumToTelegram(images, gold);
   await sendToTelegram(article);
-  console.log('تم نشر البطاقة البصرية والمقال بنجاح!');
+  console.log('تم نشر الصور والمقال بنجاح!');
 }
 
-main().catch((err) => {
-  console.error('❌ توقف التنفيذ بسبب خطأ:', err.message);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((err) => {
+    console.error('❌ توقف التنفيذ بسبب خطأ:', err.message);
+    process.exit(1);
+  });
+}
+
+module.exports = {
+  buildCoverSvg,
+  buildPricesSvg,
+  buildPointsSvg,
+  buildOutlookSvg,
+  calculateGoldMetrics,
+  defaultInsights,
+  parseInsights,
+  wrapText
+};
