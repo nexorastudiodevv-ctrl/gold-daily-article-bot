@@ -3,6 +3,7 @@ const CONFIG = {
   TELEGRAM_BOT_TOKEN: process.env.TELEGRAM_BOT_TOKEN,
   TELEGRAM_CHAT_ID: process.env.TELEGRAM_CHAT_ID,
   REQUEST_TIMEOUT_MS: 15000,
+  IMAGE_TIMEOUT_MS: 35000,
   TROY_OUNCE_TO_GRAMS: 31.1034768,
   PREFERRED_MODELS: [
     'llama-3.3-70b-versatile',
@@ -23,12 +24,12 @@ function validateEnvironment() {
   }
 }
 
-async function fetchWithRetry(url, options = {}, retries = 2) {
+async function fetchWithRetry(url, options = {}, retries = 2, timeoutMs = CONFIG.REQUEST_TIMEOUT_MS) {
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
       const response = await fetch(url, {
         ...options,
-        signal: AbortSignal.timeout(CONFIG.REQUEST_TIMEOUT_MS)
+        signal: AbortSignal.timeout(timeoutMs)
       });
       if (response.ok) return response;
 
@@ -120,9 +121,7 @@ async function fetchGoldData() {
         );
       }
     }
-    console.warn(`المصدر الأول غير متاح (الحالة: ${res?.status ?? 'خطأ شبكة'})، جاري التحويل للمصدر الثاني...`);
-  } catch (err) {
-    console.warn(`تعذر الاتصال بالمصدر الأول (${err.message})، جاري التحويل للمصدر الثاني...`);
+    console.warn(`المصدر الأول غير متاح (الحالة: ${res?.status ?? 'خطأ شبكة'})، جاري التحويل للمصدر الثاني...`); } catch (err) { console.warn(`تعذر الاتصال بالمصدر الأول (${err.message})، جاري التحويل للمصدر الثاني...`);
   }
 
   try {
@@ -147,30 +146,7 @@ async function fetchGoldData() {
       }
     }
   } catch (err) {
-    console.warn(`تعذر الاتصال بالمصدر الثاني (${err.message})`);
-  }
-
-  return {
-    available: false,
-    session: getMarketSessionContext(),
-    date: new Date().toISOString()
-  };
-}
-
-function isNonChatModel(modelId) {
-  const lower = modelId.toLowerCase();
-  return ['whisper', 'orpheus', 'tts', 'guard', 'safeguard', 'embed'].some((kw) =>
-    lower.includes(kw)
-  );
-}
-
-async function resolveGroqModelCandidates() {
-  const candidates = [];
-
-  try {
-    const res = await fetchWithRetry('https://api.groq.com/openai/v1/models', {
-      headers: {
-        'Authorization': `Bearer ${CONFIG.GROQ_API_KEY}`,
+    console.warn(`تعذر الاتصال بالمصدر الثاني (${err.message})`); }  return { available: false, session: getMarketSessionContext(), date: new Date().toISOString() }; }  function isNonChatModel(modelId) { const lower = modelId.toLowerCase(); return ['whisper', 'orpheus', 'tts', 'guard', 'safeguard', 'embed'].some((kw) => lower.includes(kw) ); }  async function resolveGroqModelCandidates() { const candidates = [];  try { const res = await fetchWithRetry('https://api.groq.com/openai/v1/models', { headers: { 'Authorization': `Bearer ${CONFIG.GROQ_API_KEY}`,
         'Content-Type': 'application/json'
       }
     }, 1);
@@ -208,12 +184,10 @@ async function resolveGroqModelCandidates() {
 function sanitizeTelegramHtml(text) {
   let cleaned = text.trim();
 
-  // تحويل Markdown شائع إن وُجد
   cleaned = cleaned
     .replace(/\*\*(.+?)\*\*/gs, '<b>$1</b>')
     .replace(/^#{1,4}\s+(.+)$/gm, '<b>$1</b>');
 
-  // تحويل وسوم القوائم والفقرات والأسطر إلى نص متوافق مع تليجرام
   cleaned = cleaned
     .replace(/<br\s*\/?>/gi, '\n')
     .replace(/<\/p\s*>/gi, '\n\n')
@@ -222,7 +196,6 @@ function sanitizeTelegramHtml(text) {
     .replace(/<li[^>]*>/gi, '• ')
     .replace(/<\/li\s*>/gi, '\n');
 
-  // إزالة أي وسوم HTML غير مدعومة في تليجرام مع الإبقاء على محتواها
   const allowedTags = new Set(['b', 'strong', 'i', 'em', 'u', 'ins', 's', 'strike', 'del', 'code', 'pre', 'blockquote']);
   cleaned = cleaned.replace(/<\/?([a-zA-Z0-9]+)([^>]*)>/g, (match, tagName) => {
     const lowerTag = tagName.toLowerCase();
@@ -232,10 +205,8 @@ function sanitizeTelegramHtml(text) {
     return '';
   });
 
-  // حماية علامات & غير المرتبطة بكيانات HTML
   cleaned = cleaned.replace(/&(?!(amp|lt|gt|quot);)/g, '&amp;');
 
-  // تقليص الأسطر الفارغة الزائدة
   return cleaned.replace(/\n{3,}/g, '\n\n').trim();
 }
 
@@ -246,6 +217,43 @@ function stripHtmlTags(htmlText) {
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"');
+}
+
+async function callGroqChat(messages, maxTokens = 3200, temperature = 0.5) {
+  const candidates = await resolveGroqModelCandidates();
+  let lastError = null;
+
+  for (const model of candidates) {
+    console.log(`محاولة التوليد عبر النموذج: ${model}`); try { const res = await fetchWithRetry('https://api.groq.com/openai/v1/chat/completions', { method: 'POST', headers: { 'Authorization': `Bearer ${CONFIG.GROQ_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model,
+          messages,
+          temperature,
+          max_tokens: maxTokens
+        })
+      });
+
+      if (!res?.ok) {
+        const errText = res ? await res.text() : 'انقطع الاتصال بخادم Groq';
+        lastError = new Error(`فشل التوليد من Groq (${model}):${errText}`);
+        console.warn(lastError.message);
+        continue;
+      }
+
+      const data = await res.json();
+      const content = data.choices?.[0]?.message?.content?.trim();
+      if (!content) {
+        lastError = new Error(`استجابة Groq فارغة من النموذج (${model})`); console.warn(lastError.message); continue; }  console.log(`تم التوليد بنجاح عبر النموذج: ${model}`);
+      return content;
+    } catch (err) {
+      lastError = err;
+      console.warn(`خطأ أثناء المحاولة مع النموذج (${model}):${err.message}`);
+    }
+  }
+
+  throw lastError || new Error('فشل التوليد من جميع النماذج المتاحة في Groq');
 }
 
 async function generateEditorialArticle(gold) {
@@ -276,9 +284,9 @@ async function generateEditorialArticle(gold) {
 - سعر الأونصة عالمياً: ${gold.ounceUsd} دولار
 - مقدار التغير اليومي: ${gold.changeUsd} دولار (${gold.changePercent})
 - السعر العالمي المرجعي للجرام (محسوب رياضياً):
-  • عيار 24: ${gold.gram24Usd} دولار
-  • عيار 21: ${gold.gram21Usd} دولار
-  • عيار 18: ${gold.gram18Usd} دولار
+  - عيار 24: ${gold.gram24Usd} دولار
+  - عيار 21: ${gold.gram21Usd} دولار
+  - عيار 18: ${gold.gram18Usd} دولار
 - توقيت الجلسة التداولية: ${gold.session}
 - الطابع الزمني للبيانات: ${gold.date}`
     : `البيانات اللحظية المعتمدة للمقال:
@@ -288,53 +296,94 @@ async function generateEditorialArticle(gold) {
 
   const userPrompt = `اكتب المقال الاقتصادي الكامل الآن (حوالي 1000 كلمة) بناءً على هذه المعطيات فقط:\n\n${marketBrief}`;
 
-  const candidates = await resolveGroqModelCandidates();
-  let lastError = null;
+  const rawArticle = await callGroqChat([
+    { role: 'system', content: systemPrompt },
+    { role: 'user', content: userPrompt }
+  ], 3200, 0.5);
 
-  for (const model of candidates) {
-    console.log(`محاولة التوليد عبر النموذج: ${model}`);
-    try {
-      const res = await fetchWithRetry('https://api.groq.com/openai/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${CONFIG.GROQ_API_KEY}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          model,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userPrompt }
-          ],
-          temperature: 0.5,
-          max_tokens: 3200
-        })
-      });
+  return sanitizeTelegramHtml(rawArticle);
+}
 
-      if (!res?.ok) {
-        const errText = res ? await res.text() : 'انقطع الاتصال بخادم Groq';
-        lastError = new Error(`فشل توليد المقال من Groq (${model}): ${errText}`);
-        console.warn(lastError.message);
-        continue;
+async function generateImagePrompt(gold, articleHtml) {
+  const plainSnippet = stripHtmlTags(articleHtml).slice(0, 600);
+  const trendHint = gold.available
+    ? `${gold.trend} (${gold.changePercent}), gold bullion bars and coins`
+    : 'gold market analysis, bullion bars and coins';
+
+  try {
+    const promptText = await callGroqChat([
+      {
+        role: 'system',
+        content: 'Write a single concise English image-generation prompt (max 18 words) for an editorial financial illustration of gold markets. No quotes, no markdown, no text inside the image.'
+      },
+      {
+        role: 'user',
+        content: `Market context: ${trendHint}\nArticle summary:${plainSnippet}`
       }
+    ], 80, 0.4);
 
-      const data = await res.json();
-      const rawArticle = data.choices?.[0]?.message?.content;
-      if (!rawArticle) {
-        lastError = new Error(`استجابة Groq فارغة من النموذج (${model})`);
-        console.warn(lastError.message);
-        continue;
-      }
-
-      console.log(`تم التوليد بنجاح عبر النموذج: ${model}`);
-      return sanitizeTelegramHtml(rawArticle);
-    } catch (err) {
-      lastError = err;
-      console.warn(`خطأ أثناء المحاولة مع النموذج (${model}): ${err.message}`);
-    }
+    const cleaned = promptText.replace(/["`*\n]/g, ' ').trim();
+    if (cleaned.length >= 10) return cleaned;
+  } catch (err) {
+    console.warn('استخدام وصف الصورة الافتراضي:', err.message);
   }
 
-  throw lastError || new Error('فشل توليد المقال من جميع النماذج المتاحة في Groq');
+  return 'Luxury gold bullion bars and coins on dark financial table, warm lighting, editorial photography';
+}
+
+async function generateArticleImageBuffer(imagePrompt) {
+  const seed = Math.floor(Math.random() * 1000000);
+  const fullPrompt = `${imagePrompt}, clean editorial composition, no text, no watermark, high detail`;
+  const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(fullPrompt)}?width=1280&height=720&seed=${seed}&nologo=true`;
+
+  try {
+    console.log('جاري توليد صورة المقال...');
+    const res = await fetchWithRetry(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0',
+        'Accept': 'image/*'
+      }
+    }, 1, CONFIG.IMAGE_TIMEOUT_MS);
+
+    if (!res?.ok) {
+      console.warn(`تعذر توليد الصورة (الحالة: ${res?.status ?? 'خطأ شبكة'})، سيتم نشر المقال النصي فقط.`);
+      return null;
+    }
+
+    const buffer = Buffer.from(await res.arrayBuffer());
+    if (buffer.byteLength < 2000) {
+      console.warn('حجم الصورة المستلمة صغير جداً، سيتم نشر المقال النصي فقط.');
+      return null;
+    }
+
+    return buffer;
+  } catch (err) {
+    console.warn(`تجاوز وقت أو خطأ أثناء توليد الصورة (${err.message})، سيتم نشر المقال النصي فقط.`);
+    return null;
+  }
+}
+
+async function sendPhotoCaption(imageBuffer, gold) {
+  const caption = gold.available
+    ? `<b>تقرير الذهب اليومي ${gold.trendEmoji}</b>\nالأونصة: <b>${gold.ounceUsd}$</b> (${gold.changePercent})\nالمقال التحليلي الكامل في الرسالة التالية 👇`
+    : `<b>تقرير الذهب اليومي 🥇</b>\nقراءة تحليلية شاملة لحركة السوق في الرسالة التالية 👇`;
+
+  const formData = new FormData();
+  formData.append('chat_id', CONFIG.TELEGRAM_CHAT_ID);
+  formData.append('caption', caption);
+  formData.append('parse_mode', 'HTML');
+  formData.append('photo', new Blob([imageBuffer], { type: 'image/jpeg' }), 'gold-report.jpg');
+
+  const url = `https://api.telegram.org/bot${CONFIG.TELEGRAM_BOT_TOKEN}/sendPhoto`;
+  const res = await fetchWithRetry(url, {
+    method: 'POST',
+    body: formData
+  }, 1, CONFIG.REQUEST_TIMEOUT_MS);
+
+  if (!res?.ok) {
+    const errText = res ? await res.text() : 'انقطع الاتصال بخادم تليجرام';
+    console.warn(`تعذر إرسال الصورة إلى تليجرام (${errText})، سيتم إرسال المقال النصي.`);
+  }
 }
 
 async function sendToTelegram(htmlText) {
@@ -385,32 +434,3 @@ async function sendToTelegram(htmlText) {
           text: stripHtmlTags(chunk),
           disable_web_page_preview: true
         })
-      });
-      if (plainRes?.ok) continue;
-      const plainErr = plainRes ? await plainRes.text() : errText;
-      throw new Error(`فشل الإرسال لتليجرام: ${plainErr}`);
-    }
-
-    throw new Error(`فشل الإرسال لتليجرام: ${errText}`);
-  }
-}
-
-async function main() {
-  validateEnvironment();
-
-  console.log('1/3 جاري سحب وحساب مؤشرات الذهب العالمية...');
-  const gold = await fetchGoldData();
-  console.log('ملخص المؤشرات:', gold);
-
-  console.log('2/3 جاري صياغة المقال الاقتصادي عبر Groq...');
-  const article = await generateEditorialArticle(gold);
-
-  console.log('3/3 جاري النشر في قناة تليجرام...');
-  await sendToTelegram(article);
-  console.log('تم نشر المقال الصحفي بنجاح!');
-}
-
-main().catch((err) => {
-  console.error('❌ توقف التنفيذ بسبب خطأ:', err.message);
-  process.exit(1);
-});
