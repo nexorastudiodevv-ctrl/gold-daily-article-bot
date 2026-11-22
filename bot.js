@@ -1,4 +1,4 @@
-const zlib = require('zlib');
+const sharp = require('sharp');
 
 const CONFIG = {
   GROQ_API_KEY: process.env.GROQ_API_KEY,
@@ -58,6 +58,16 @@ function getMarketSessionContext(now = new Date()) {
   return 'فترة التداول الهادئة بين الإغلاق الأمريكي والافتتاح الآسيوي';
 }
 
+function formatDateLabel(rawDate) {
+  const d = new Date(rawDate || Date.now());
+  if (Number.isNaN(d.getTime())) return 'DAILY UPDATE';
+  return d.toLocaleDateString('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric'
+  }).toUpperCase();
+}
+
 function calculateGoldMetrics(ounceUsd, changeUsd, changePercent, rawDate, sourceName) {
   const ounce = Number(ounceUsd);
   const chg = Number(changeUsd || 0);
@@ -68,12 +78,19 @@ function calculateGoldMetrics(ounceUsd, changeUsd, changePercent, rawDate, sourc
   const gram18 = gram24 * (18 / 24);
 
   let trend = 'استقرار نسبي';
+  let trendEn = 'STABLE MARKET';
+  let trendColor = '#F59E0B';
   let trendEmoji = '⚖️';
+
   if (pct > 0.15) {
     trend = 'صعود';
+    trendEn = 'BULLISH UPTREND';
+    trendColor = '#22C55E';
     trendEmoji = '📈';
   } else if (pct < -0.15) {
     trend = 'هبوط';
+    trendEn = 'BEARISH DOWNTREND';
+    trendColor = '#EF4444';
     trendEmoji = '📉';
   }
 
@@ -86,9 +103,11 @@ function calculateGoldMetrics(ounceUsd, changeUsd, changePercent, rawDate, sourc
     gram18Usd: gram18.toFixed(2),
     changeUsd: `${chg >= 0 ? '+' : ''}${chg.toFixed(2)}`,
     changePercent: `${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%`,
-    pctNumber: pct,
     trend,
+    trendEn,
+    trendColor,
     trendEmoji,
+    dateLabel: formatDateLabel(rawDate),
     session: getMarketSessionContext(),
     date: rawDate || new Date().toISOString()
   };
@@ -139,94 +158,77 @@ async function fetchGoldData() {
 
   return {
     available: false,
-    pctNumber: 0,
+    trendEn: 'MARKET ANALYSIS',
+    trendColor: '#F59E0B',
+    dateLabel: formatDateLabel(new Date().toISOString()),
     session: getMarketSessionContext(),
     date: new Date().toISOString()
   };
 }
 
-const CRC_TABLE = (() => {
-  const table = new Uint32Array(256);
-  for (let n = 0; n < 256; n++) {
-    let c = n;
-    for (let k = 0; k < 8; k++) {
-      c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
-    }
-    table[n] = c >>> 0;
-  }
-  return table;
-})();
+async function createGoldCardPng(gold) {
+  const ounceText = gold.available ? `$${gold.ounceUsd}` : 'SPOT GOLD';
+  const changeText = gold.available ? `${gold.changeUsd}$ (${gold.changePercent})` : 'DAILY REPORT';
+  const g24 = gold.available ? `$${gold.gram24Usd}` : '--';
+  const g21 = gold.available ? `$${gold.gram21Usd}` : '--';
+  const g18 = gold.available ? `$${gold.gram18Usd}` : '--';
 
-function crc32(buf) {
-  let crc = 0xffffffff;
-  for (let i = 0; i < buf.length; i++) {
-    crc = CRC_TABLE[(crc ^ buf[i]) & 0xff] ^ (crc >>> 8);
-  }
-  return (crc ^ 0xffffffff) >>> 0;
-}
+  const svg = `
+  <svg width="1280" height="720" viewBox="0 0 1280 720" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="#090D16"/>
+        <stop offset="55%" stop-color="#111827"/>
+        <stop offset="100%" stop-color="#1E293B"/>
+      </linearGradient>
+      <linearGradient id="gold" x1="0%" y1="0%" x2="100%" y2="0%">
+        <stop offset="0%" stop-color="#FEF08A"/>
+        <stop offset="50%" stop-color="#F59E0B"/>
+        <stop offset="100%" stop-color="#D97706"/>
+      </linearGradient>
+    </defs>
 
-function makePngChunk(type, data) {
-  const typeBuf = Buffer.from(type, 'ascii');
-  const lenBuf = Buffer.alloc(4);
-  lenBuf.writeUInt32BE(data.length, 0);
-  const crcBuf = Buffer.alloc(4);
-  crcBuf.writeUInt32BE(crc32(Buffer.concat([typeBuf, data])), 0);
-  return Buffer.concat([lenBuf, typeBuf, data, crcBuf]);
-}
+    <rect width="1280" height="720" fill="url(#bg)"/>
+    <rect x="40" y="40" width="1200" height="640" rx="28" fill="#0F172A" fill-opacity="0.82" stroke="#F59E0B" stroke-opacity="0.4" stroke-width="2"/>
 
-function createGoldBannerPng(gold) {
-  const width = 640;
-  const height = 320;
-  let accent = [245, 158, 11];
-  if (gold.available && gold.pctNumber > 0.15) accent = [34, 197, 94];
-  else if (gold.available && gold.pctNumber < -0.15) accent = [239, 68, 68];
+    <!-- رأس البطاقة -->
+    <rect x="84" y="84" width="10" height="42" rx="5" fill="url(#gold)"/>
+    <text x="110" y="114" font-family="DejaVu Sans, Liberation Sans, Arial, sans-serif" font-size="28" font-weight="bold" fill="#F8FAFC">SAHM ELZAHAB  |  GOLD MARKET</text>
+    <text x="1196" y="114" text-anchor="end" font-family="DejaVu Sans, Liberation Sans, Arial, sans-serif" font-size="23" font-weight="bold" fill="#94A3B8">${gold.dateLabel}</text>
 
-  const rawScanlines = Buffer.alloc(height * (1 + width * 3));
-  for (let y = 0; y < height; y++) {
-    const rowStart = y * (1 + width * 3);
-    rawScanlines[rowStart] = 0;
-    const ny = y / height;
-    for (let x = 0; x < width; x++) {
-      const nx = x / width;
-      const px = rowStart + 1 + x * 3;
-      const glow = Math.max(0, 1 - Math.hypot(nx - 0.5, ny - 0.5) * 1.35);
-      let r = Math.round(14 + nx * 18 + glow * 45);
-      let g = Math.round(20 + ny * 16 + glow * 32);
-      let b = Math.round(34 + (1 - nx) * 20 + glow * 10);
+    <!-- السعر الرئيسي -->
+    <text x="84" y="196" font-family="DejaVu Sans, Liberation Sans, Arial, sans-serif" font-size="22" font-weight="bold" fill="#F59E0B" letter-spacing="2">XAU / USD OUNCE PRICE</text>
+    <text x="84" y="302" font-family="DejaVu Sans, Liberation Sans, Arial, sans-serif" font-size="98" font-weight="bold" fill="url(#gold)">${ounceText}</text>
 
-      if (x < 10 || x >= width - 10 || y < 10 || y >= height - 10) {
-        r = 217; g = 155; b = 38;
-      } else if ((y >= 24 && y <= 36) || (y >= height - 36 && y <= height - 24)) {
-        r = 245; g = 185; b = 45;
-      } else if (y >= 135 && y <= 185 && x >= 80 && x <= width - 80) {
-        const barFill = gold.available ? Math.min(1, Math.max(0.18, 0.5 + gold.pctNumber * 0.25)) : 0.5;
-        const progressX = 80 + (width - 160) * barFill;
-        if (x <= progressX) {
-          r = accent[0]; g = accent[1]; b = accent[2];
-        } else {
-          r = 35; g = 45; b = 65;
-        }
-      }
+    <!-- شارة التغير والاتجاه -->
+    <rect x="84" y="338" width="380" height="52" rx="12" fill="${gold.trendColor}" fill-opacity="0.16" stroke="${gold.trendColor}" stroke-width="2"/>
+    <text x="274" y="372" text-anchor="middle" font-family="DejaVu Sans, Liberation Sans, Arial, sans-serif" font-size="24" font-weight="bold" fill="${gold.trendColor}">${changeText}</text>
 
-      rawScanlines[px] = Math.min(255, Math.max(0, r));
-      rawScanlines[px + 1] = Math.min(255, Math.max(0, g));
-      rawScanlines[px + 2] = Math.min(255, Math.max(0, b));
-    }
-  }
+    <rect x="488" y="338" width="320" height="52" rx="12" fill="#1E293B" stroke="#334155" stroke-width="2"/>
+    <text x="648" y="372" text-anchor="middle" font-family="DejaVu Sans, Liberation Sans, Arial, sans-serif" font-size="21" font-weight="bold" fill="#E2E8F0">${gold.trendEn}</text>
 
-  const signature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
-  const ihdr = Buffer.alloc(13);
-  ihdr.writeUInt32BE(width, 0);
-  ihdr.writeUInt32BE(height, 4);
-  ihdr[8] = 8;
-  ihdr[9] = 2;
+    <!-- بطاقة شعار جانبية -->
+    <rect x="890" y="168" width="306" height="222" rx="22" fill="#1E293B" stroke="#F59E0B" stroke-opacity="0.4" stroke-width="2"/>
+    <polygon points="1043,205 1122,254 1043,303 964,254" fill="url(#gold)"/>
+    <polygon points="964,254 1043,303 1043,345 964,296" fill="#B45309"/>
+    <polygon points="1122,254 1043,303 1043,345 1122,296" fill="#D97706"/>
+    <text x="1043" y="374" text-anchor="middle" font-family="DejaVu Sans, Liberation Sans, Arial, sans-serif" font-size="18" font-weight="bold" fill="#FDE047">@sahm_elzahab</text>
 
-  return Buffer.concat([
-    signature,
-    makePngChunk('IHDR', ihdr),
-    makePngChunk('IDAT', zlib.deflateSync(rawScanlines, { level: 6 })),
-    makePngChunk('IEND', Buffer.alloc(0))
-  ]);
+    <!-- صناديق الأعيرة الثلاثة -->
+    <rect x="84" y="455" width="352" height="162" rx="20" fill="#1E293B" stroke="#F59E0B" stroke-opacity="0.3" stroke-width="1.5"/>
+    <text x="260" y="502" text-anchor="middle" font-family="DejaVu Sans, Liberation Sans, Arial, sans-serif" font-size="21" fill="#94A3B8">24K / GRAM</text>
+    <text x="260" y="572" text-anchor="middle" font-family="DejaVu Sans, Liberation Sans, Arial, sans-serif" font-size="44" font-weight="bold" fill="#FDE047">${g24}</text>
+
+    <rect x="464" y="455" width="352" height="162" rx="20" fill="#1E293B" stroke="#F59E0B" stroke-opacity="0.3" stroke-width="1.5"/>
+    <text x="640" y="502" text-anchor="middle" font-family="DejaVu Sans, Liberation Sans, Arial, sans-serif" font-size="21" fill="#94A3B8">21K / GRAM</text>
+    <text x="640" y="572" text-anchor="middle" font-family="DejaVu Sans, Liberation Sans, Arial, sans-serif" font-size="44" font-weight="bold" fill="#FDE047">${g21}</text>
+
+    <rect x="844" y="455" width="352" height="162" rx="20" fill="#1E293B" stroke="#F59E0B" stroke-opacity="0.3" stroke-width="1.5"/>
+    <text x="1020" y="502" text-anchor="middle" font-family="DejaVu Sans, Liberation Sans, Arial, sans-serif" font-size="21" fill="#94A3B8">18K / GRAM</text>
+    <text x="1020" y="572" text-anchor="middle" font-family="DejaVu Sans, Liberation Sans, Arial, sans-serif" font-size="44" font-weight="bold" fill="#FDE047">${g18}</text>
+  </svg>`;
+
+  return await sharp(Buffer.from(svg)).png().toBuffer();
 }
 
 function isNonChatModel(modelId) {
@@ -370,7 +372,6 @@ async function sendPhotoToTelegram(pngBuffer, gold) {
     const errText = res ? await res.text() : 'انقطع الاتصال بخادم تليجرام';
     throw new Error(`فشل إرسال الصورة إلى تليجرام: ${errText}`);
   }
-  console.log('✅ تم إرسال الصورة إلى تليجرام بنجاح!');
 }
 
 async function sendToTelegram(htmlText) {
@@ -429,11 +430,11 @@ async function sendToTelegram(htmlText) {
 async function main() {
   validateEnvironment();
   const gold = await fetchGoldData();
-  const pngBuffer = createGoldBannerPng(gold);
+  const pngBuffer = await createGoldCardPng(gold);
   await sendPhotoToTelegram(pngBuffer, gold);
   const article = await generateEditorialArticle(gold);
   await sendToTelegram(article);
-  console.log('✅ تم نشر الصورة والمقال بنجاح!');
+  console.log('تم نشر البطاقة البصرية والمقال بنجاح!');
 }
 
 main().catch((err) => {
