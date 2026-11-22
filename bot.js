@@ -121,7 +121,9 @@ async function fetchGoldData() {
         );
       }
     }
-    console.warn(`المصدر الأول غير متاح (الحالة: ${res?.status ?? 'خطأ شبكة'})، جاري التحويل للمصدر الثاني...`); } catch (err) { console.warn(`تعذر الاتصال بالمصدر الأول (${err.message})، جاري التحويل للمصدر الثاني...`);
+    console.warn(`المصدر الأول غير متاح (الحالة: ${res?.status ?? 'خطأ شبكة'})، جاري التحويل للمصدر الثاني...`);
+  } catch (err) {
+    console.warn(`تعذر الاتصال بالمصدر الأول (${err.message})، جاري التحويل للمصدر الثاني...`);
   }
 
   try {
@@ -146,7 +148,30 @@ async function fetchGoldData() {
       }
     }
   } catch (err) {
-    console.warn(`تعذر الاتصال بالمصدر الثاني (${err.message})`); }  return { available: false, session: getMarketSessionContext(), date: new Date().toISOString() }; }  function isNonChatModel(modelId) { const lower = modelId.toLowerCase(); return ['whisper', 'orpheus', 'tts', 'guard', 'safeguard', 'embed'].some((kw) => lower.includes(kw) ); }  async function resolveGroqModelCandidates() { const candidates = [];  try { const res = await fetchWithRetry('https://api.groq.com/openai/v1/models', { headers: { 'Authorization': `Bearer ${CONFIG.GROQ_API_KEY}`,
+    console.warn(`تعذر الاتصال بالمصدر الثاني (${err.message})`);
+  }
+
+  return {
+    available: false,
+    session: getMarketSessionContext(),
+    date: new Date().toISOString()
+  };
+}
+
+function isNonChatModel(modelId) {
+  const lower = modelId.toLowerCase();
+  return ['whisper', 'orpheus', 'tts', 'guard', 'safeguard', 'embed'].some((kw) =>
+    lower.includes(kw)
+  );
+}
+
+async function resolveGroqModelCandidates() {
+  const candidates = [];
+
+  try {
+    const res = await fetchWithRetry('https://api.groq.com/openai/v1/models', {
+      headers: {
+        'Authorization': `Bearer ${CONFIG.GROQ_API_KEY}`,
         'Content-Type': 'application/json'
       }
     }, 1);
@@ -224,7 +249,12 @@ async function callGroqChat(messages, maxTokens = 3200, temperature = 0.5) {
   let lastError = null;
 
   for (const model of candidates) {
-    console.log(`محاولة التوليد عبر النموذج: ${model}`); try { const res = await fetchWithRetry('https://api.groq.com/openai/v1/chat/completions', { method: 'POST', headers: { 'Authorization': `Bearer ${CONFIG.GROQ_API_KEY}`,
+    console.log(`محاولة التوليد عبر النموذج: ${model}`);
+    try {
+      const res = await fetchWithRetry('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${CONFIG.GROQ_API_KEY}`,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
@@ -237,7 +267,7 @@ async function callGroqChat(messages, maxTokens = 3200, temperature = 0.5) {
 
       if (!res?.ok) {
         const errText = res ? await res.text() : 'انقطع الاتصال بخادم Groq';
-        lastError = new Error(`فشل التوليد من Groq (${model}):${errText}`);
+        lastError = new Error(`فشل التوليد من Groq (${model}): ${errText}`);
         console.warn(lastError.message);
         continue;
       }
@@ -245,11 +275,16 @@ async function callGroqChat(messages, maxTokens = 3200, temperature = 0.5) {
       const data = await res.json();
       const content = data.choices?.[0]?.message?.content?.trim();
       if (!content) {
-        lastError = new Error(`استجابة Groq فارغة من النموذج (${model})`); console.warn(lastError.message); continue; }  console.log(`تم التوليد بنجاح عبر النموذج: ${model}`);
+        lastError = new Error(`استجابة Groq فارغة من النموذج (${model})`);
+        console.warn(lastError.message);
+        continue;
+      }
+
+      console.log(`تم التوليد بنجاح عبر النموذج: ${model}`);
       return content;
     } catch (err) {
       lastError = err;
-      console.warn(`خطأ أثناء المحاولة مع النموذج (${model}):${err.message}`);
+      console.warn(`خطأ أثناء المحاولة مع النموذج (${model}): ${err.message}`);
     }
   }
 
@@ -318,7 +353,7 @@ async function generateImagePrompt(gold, articleHtml) {
       },
       {
         role: 'user',
-        content: `Market context: ${trendHint}\nArticle summary:${plainSnippet}`
+        content: `Market context: ${trendHint}\nArticle summary: ${plainSnippet}`
       }
     ], 80, 0.4);
 
@@ -434,3 +469,39 @@ async function sendToTelegram(htmlText) {
           text: stripHtmlTags(chunk),
           disable_web_page_preview: true
         })
+      });
+      if (plainRes?.ok) continue;
+      const plainErr = plainRes ? await plainRes.text() : errText;
+      throw new Error(`فشل الإرسال لتليجرام: ${plainErr}`);
+    }
+
+    throw new Error(`فشل الإرسال لتليجرام: ${errText}`);
+  }
+}
+
+async function main() {
+  validateEnvironment();
+
+  console.log('1/4 جاري سحب وحساب مؤشرات الذهب العالمية...');
+  const gold = await fetchGoldData();
+  console.log('ملخص المؤشرات:', gold);
+
+  console.log('2/4 جاري صياغة المقال الاقتصادي عبر Groq...');
+  const article = await generateEditorialArticle(gold);
+
+  console.log('3/4 جاري تجهيز وتوليد الصورة...');
+  const imagePrompt = await generateImagePrompt(gold, article);
+  const imageBuffer = await generateArticleImageBuffer(imagePrompt);
+  if (imageBuffer) {
+    await sendPhotoCaption(imageBuffer, gold);
+  }
+
+  console.log('4/4 جاري نشر المقال في قناة تليجرام...');
+  await sendToTelegram(article);
+  console.log('تم نشر المقال والملحقات بنجاح!');
+}
+
+main().catch((err) => {
+  console.error('❌ توقف التنفيذ بسبب خطأ:', err.message);
+  process.exit(1);
+});
