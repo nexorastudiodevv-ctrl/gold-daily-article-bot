@@ -21,6 +21,11 @@ const CONFIG = {
 // خط الأمير للنصوص العربية في الصورة (مع خطوط احتياطية)
 const CARD_FONT = 'Amiri, Noto Sans Arabic, DejaVu Sans, sans-serif';
 
+function telegramApiUrl(method) {
+  const token = String(CONFIG.TELEGRAM_BOT_TOKEN || '').trim();
+  return 'https://api.telegram.org/bot' + token + '/' + method;
+}
+
 function validateEnvironment() {
   const missing = ['GROQ_API_KEY', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID'].filter(
     (key) => !CONFIG[key] || !CONFIG[key].trim()
@@ -563,7 +568,7 @@ async function sendAlbumToTelegram(pngBuffers, gold) {
   });
 
   const res = await fetchWithRetry(
-    `[https://api.telegram.org/bot$](https://api.telegram.org/bot$){CONFIG.TELEGRAM_BOT_TOKEN}/sendMediaGroup`,
+    telegramApiUrl('sendMediaGroup'),
     { method: 'POST', body: formData },
     2,
     45000
@@ -576,7 +581,7 @@ async function sendAlbumToTelegram(pngBuffers, gold) {
 }
 
 async function sendToTelegram(htmlText) {
-  const url = `[https://api.telegram.org/bot$](https://api.telegram.org/bot$){CONFIG.TELEGRAM_BOT_TOKEN}/sendMessage`;
+  const url = telegramApiUrl('sendMessage');
   const MAX_LENGTH = 4000;
   const chunks = [];
 
