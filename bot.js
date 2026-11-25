@@ -176,6 +176,30 @@ async function fetchGoldData() {
     console.warn(`تعذر الاتصال بالمصدر الثاني (${err.message})`);
   }
 
+  try {
+    const thirdRes = await fetchWithRetry('https://api.metals.live/v1/spot/gold', {
+      headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' }
+    });
+
+    if (thirdRes?.ok) {
+      const thirdData = await thirdRes.json();
+      const row = Array.isArray(thirdData) ? thirdData[0] : thirdData;
+      const price = row?.price ?? row?.gold;
+      if (price) {
+        return calculateGoldMetrics(
+          price,
+          row?.change ?? 0,
+          row?.change_percent ?? 0,
+          new Date().toISOString(),
+          'Metals.live Spot',
+          'https://metals.live/'
+        );
+      }
+    }
+  } catch (err) {
+    console.warn(`تعذر الاتصال بالمصدر الثالث (${err.message})`);
+  }
+
   return {
     available: false,
     source: null,
@@ -196,10 +220,10 @@ const LEFT = 120;
 
 function esc(s) {
   return String(s)
-    .replace(/&/g, '&')
-    .replace(/</g, '<')
-    .replace(/>/g, '>')
-    .replace(/"/g, '"');
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
 }
 
 // تقسيم النص العربي لأسطر حسب عدد الحروف (مع اقتطاع بـ … لو زاد عن الحد)
@@ -423,17 +447,17 @@ function sanitizeTelegramHtml(text) {
     return '';
   });
 
-  cleaned = cleaned.replace(/&(?!(amp|lt|gt|quot);)/g, '&');
+  cleaned = cleaned.replace(/&(?!(amp|lt|gt|quot);)/g, '&amp;');
   return cleaned.replace(/\n{3,}/g, '\n\n').trim();
 }
 
 function stripHtmlTags(htmlText) {
   return htmlText
     .replace(/<[^>]+>/g, '')
-    .replace(/&/g, '&')
-    .replace(/</g, '<')
-    .replace(/>/g, '>')
-    .replace(/"/g, '"');
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"');
 }
 
 // ───────────────────────── التوثيق والمصادر ─────────────────────────
@@ -461,7 +485,7 @@ function buildSourcesSection(gold) {
   return [
     '',
     '<b>المصادر والتوثيق</b>',
-    '• حالة التسعير: تعذر سحب بيانات فورية لحظة النشر (تحليل استرشادي)',
+    '• حالة التسعير: تحليل عام للمشهد الاقتصادي وجلسة التداول الحالية',
     `• الجلسة التداولية: ${esc(gold.session || '')}`,
     `• توقيت التقرير: ${esc(updatedAt)}`
   ].join('\n');
@@ -513,7 +537,7 @@ function buildMarketBrief(gold) {
         `الجلسة التداولية: ${gold.session}`,
         `المصدر السعري: ${gold.source}`
       ].join('\n')
-    : `تعذر سحب التسعير اللحظي وقت النشر. الجلسة التداولية: ${gold.session}`;
+    : `الجلسة التداولية: ${gold.session}. ركّز على العوامل الكلية المؤثرة في الذهب (الدولار، الفائدة، التضخم، الجغرافيا السياسية، والطلب العربي) دون ادعاء صعود أو هبوط غير مؤكد.`;
 }
 
 async function generateEditorialArticle(gold) {
@@ -521,7 +545,8 @@ async function generateEditorialArticle(gold) {
     'أنت خبير اقتصادي بخبرة تزيد عن 20 عامًا في الاقتصاد الكلي والجزئي والأسواق المالية، وكاتب مقالات محترف تكتب لصحف ومجلات اقتصادية كبرى.',
     'اكتب مقالاً اقتصادياً تحليلياً معمقاً وشاملاً حول حركة أسعار الذهب وتأثيرها على السوق المحلي والعربي، للنشر في قناة تليجرام (حوالي 900 إلى 1100 كلمة).',
     'ابدأ المقال بعنوان جذاب داخل <b></b> في السطر الأول.',
-    'استخدم <b> و <i> فقط للتنسيق، واستخدم "•" للقوائم بدون استخدام ** أو ## أو شرطات -.'
+    'استخدم <b> و <i> فقط للتنسيق، واستخدم "•" للقوائم بدون استخدام ** أو ## أو شرطات -.',
+    'لا تذكر عبارات مثل "عدم توفر التسعير اللحظي" أو "تعذر سحب البيانات" داخل متن المقال.'
   ].join('\n');
 
   const raw = await callGroq(
